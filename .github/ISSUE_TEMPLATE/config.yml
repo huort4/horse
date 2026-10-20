@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and troubleshooting
+    url: https://github.com/scarif-labs/horus/discussions/categories/q-a
+    about: Ask for setup help or compare device compatibility reports.
+  - name: Ideas and feature requests
+    url: https://github.com/scarif-labs/horus/discussions/categories/ideas
+    about: Describe your workflow and discuss a proposed improvement first.
+  - name: Security reporting guidance
+    url: https://github.com/scarif-labs/horus/security/policy
+    about: Read the policy before sharing a security concern; never post vulnerability details publicly.

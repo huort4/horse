@@ -1,0 +1,31 @@
+title: "[Show & Tell] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share a project or workflow that others can learn from. A public repository or screenshot is optional.
+        Remove secrets, sign-in codes, private code, and personal information from examples and images.
+  - type: textarea
+    id: project
+    attributes:
+      label: What did you build or try?
+      description: Explain the goal and where Horus fits into the workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Setup and steps others can follow
+      description: Include useful commands, Horus/Android versions, device model, distribution, and agent or shell if relevant. Mention USB remote access if used.
+    validations:
+      required: true
+  - type: textarea
+    id: lessons
+    attributes:
+      label: What worked, what was difficult, and what would you change?
+      description: Share practical lessons or a specific question for the community.
+  - type: textarea
+    id: links
+    attributes:
+      label: Optional public links or screenshots
+      description: Only share material you have permission to publish. Review images for private information.

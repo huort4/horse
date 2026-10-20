@@ -1,0 +1,92 @@
+name: Bug report
+description: Report a reproducible problem with Horus on Android or the optional host CLI.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing Issues and Discussions first. For setup questions, use [Q&A](https://github.com/scarif-labs/horus/discussions/categories/q-a).
+        Do not share passwords, tokens, SSH private keys, sign-in codes, private code, device serials, or personal information. Review screenshots and logs before posting.
+        For vulnerabilities, follow the [security policy](https://github.com/scarif-labs/horus/security/policy).
+  - type: input
+    id: horus-version
+    attributes:
+      label: Horus version and installation source
+      description: Include the app version and F-Droid or source build; include a commit SHA for source builds.
+      placeholder: "1.0.4, F-Droid"
+    validations:
+      required: true
+  - type: input
+    id: android-version
+    attributes:
+      label: Android version
+      description: Include the Android version and API level if known; use not applicable for a host-only CLI bug.
+      placeholder: "Android 16 / API 36"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device model and ROM
+      description: Model and stock or custom ROM; omit unique identifiers. For host-only bugs, give the host OS instead.
+    validations:
+      required: true
+  - type: input
+    id: architecture
+    attributes:
+      label: CPU architecture
+      description: Horus requires ARM64 (arm64-v8a). State unknown if you cannot determine it; include host architecture for CLI bugs.
+      placeholder: arm64-v8a
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected agent or component
+      options:
+        - Claude Code
+        - Codex
+        - OpenCode
+        - Plain shell / terminal
+        - Workspace setup / downloads
+        - Projects / GitHub CLI
+        - Remote access / horus-cli
+        - App UI / lock / onboarding
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: component-version
+    attributes:
+      label: Agent, CLI, and distribution versions
+      description: Include relevant agent, horus-cli, or rootfs versions if known. Do not run a failing command just to obtain them.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Number the steps from a known starting state. Include minimal commands with private paths and repository names removed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Describe what happened, frequency, and any exit code or error message.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Optional short error excerpt. Remove secrets, personal information, private code, repository names, and sign-in codes. Check every screenshot before attaching it.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context and recovery attempts
+      description: For storage failures, approximate free space; for session failures, battery restrictions, background/lock state, and what you already tried. Do not delete a workspace to gather evidence.

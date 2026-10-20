@@ -1,0 +1,31 @@
+title: "[Idea] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing Ideas and Issues before starting a topic. Describe a real workflow; discussion does not commit the project to a release or timeline.
+        Do not include secrets, private code, or personal information. See [contribution guidance](https://github.com/scarif-labs/horus/blob/main/CONTRIBUTING.md) for reporting and proposal guidance.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and affected workflow
+      description: Who encounters this limitation, and what task does it prevent or make difficult?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Proposed improvement
+      description: Describe the desired behavior and how someone could tell it works.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds and alternatives
+      description: Explain what you do today and why existing options are insufficient.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Compatibility, tradeoffs, and related topics
+      description: Link related Issues or Discussions. Include relevant Android, ARM64, distribution, storage, or security considerations and offer a reproducible test case if you have one.

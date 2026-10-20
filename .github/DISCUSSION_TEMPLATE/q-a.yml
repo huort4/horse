@@ -1,0 +1,33 @@
+title: "[Help] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Explain what you want to do and what you have tried. Search existing topics first, and mark a helpful reply as the answer when resolved.
+        Never post passwords, tokens, SSH private keys, sign-in codes, private code, device serials, or personal information. Use the [security policy](https://github.com/scarif-labs/horus/security/policy) for vulnerabilities.
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: Describe the goal and the question you need help answering.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Horus version and source, Android version, device model, architecture, affected agent/shell and version, and distribution if known. For USB access, include host OS and horus-cli version. Unknown values are okay.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried, and what happened?
+      description: Include relevant steps, expected versus actual behavior, and links to related topics.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized error text or screenshots
+      description: Optional short excerpt. Review everything for secrets and personal information before sharing.

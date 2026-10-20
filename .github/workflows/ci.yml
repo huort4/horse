@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CI: 'true'
+
+jobs:
+  node:
+    name: Node validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Version and changelog consistency
+        run: node scripts/ci/check-version.js
+      - run: npm run typecheck
+      - run: npm run lint
+      - name: Jest (includes CLI tests)
+        run: npm run test:unit -- --ci --watchAll=false --json --outputFile=jest-results.json
+      - name: Verify Jest propagates test failures
+        run: |
+          set +e
+          npm run test:unit:failure-probe > failure-probe.log 2>&1
+          status=$?
+          set -e
+          cat failure-probe.log
+          test "$status" -eq 1
+          grep -q 'HORUS_FORCE_TS_UNIT_FAILURE' failure-probe.log
+      - name: Host native regressions
+        run: bash scripts/native/test-unix-socket-translation.sh
+      - name: Retain Jest report
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: jest-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: jest-results.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  android:
+    name: Android release validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          # The action's default includes the retired SDK "tools" package.
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install repository toolchain
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
+      - run: npm ci --no-audit --no-fund
+      - name: JVM tests and unsigned production build
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest :app:assembleRelease --no-daemon --stacktrace --max-workers=2
+      - name: Validate APK and record metadata
+        run: node scripts/ci/verify-apk.js android/app/build/outputs/apk/release/app-release-unsigned.apk
+      - name: Retain JVM reports
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: android-test-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            android/app/build/reports/tests/
+            android/app/build/test-results/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Retain validated unsigned APK (not for installation)
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: unsigned-release-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+            artifacts/ci/apk-metadata.json
+          if-no-files-found: error
+          retention-days: 7
