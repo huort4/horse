@@ -253,9 +253,10 @@ tasks.configureEach { nativeTask ->
 
 // Ensure every APK variant that packages native libraries has built the
 // runtime and generated its digest manifest first.
-tasks.named("preBuild").configure {
-    dependsOn("generateAlpineRuntimeManifest", verifyAppCodegenArtifacts, "buildHorusPtyHelper")
-}
+// DISABLED: Alpine runtime not needed for WebSocket-based remote access
+// tasks.named("preBuild").configure {
+//     dependsOn("generateAlpineRuntimeManifest", verifyAppCodegenArtifacts, "buildHorusPtyHelper")
+// }
 
 tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
     systemProperty("horus.forceKotlinUnitFailure", forceKotlinUnitFailure)

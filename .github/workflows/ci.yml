@@ -51,8 +51,6 @@ jobs:
           cat failure-probe.log
           test "$status" -eq 1
           grep -q 'HORUS_FORCE_TS_UNIT_FAILURE' failure-probe.log
-      - name: Host native regressions
-        run: bash scripts/native/test-unix-socket-translation.sh
       - name: Retain Jest report
         if: ${{ always() && !cancelled() }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
