@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 14,
-    color: uiColors.inkSecondary,
+    color: uiColors.subdued,
     marginBottom: 24,
   },
   statusBar: {
@@ -223,7 +223,7 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 14,
-    color: uiColors.inkSecondary,
+    color: uiColors.subdued,
     marginBottom: 8,
   },
   input: {
@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
   },
   urlLabel: {
     fontSize: 12,
-    color: uiColors.inkSecondary,
+    color: uiColors.subdued,
     marginBottom: 4,
   },
   urlText: {
@@ -306,7 +306,7 @@ const styles = StyleSheet.create({
   },
   helpText: {
     fontSize: 12,
-    color: uiColors.inkSecondary,
+    color: uiColors.subdued,
     textAlign: 'center',
   },
 });
