@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- Source for banner.png. Render at 2x: chrome --headless --force-device-scale-factor=2 --default-background-color=00000000 --window-size=880,330 --screenshot=banner.png banner.html -->
+<html><head><meta charset="utf-8">
+<style>
+@font-face { font-family: Michroma; src: url(../../android/app/src/main/assets/fonts/Michroma.ttf); }
+@font-face { font-family: Hiero; src: local("Noto Sans Egyptian Hieroglyphs"); }
+html, body { margin: 0; background: transparent; }
+.card {
+  width: 880px; height: 330px; box-sizing: border-box;
+  border-radius: 18px; overflow: hidden; position: relative;
+  background:
+    radial-gradient(ellipse 60% 70% at 50% 48%, rgba(128,235,18,.10), transparent 70%),
+    linear-gradient(#0e1311, #0a0d0c);
+  border: 1px solid #2a2a1c;
+  display: flex; flex-direction: column; align-items: center;
+}
+.stars { position: absolute; font-family: Hiero; color: #c9a85a; opacity: .22; font-size: 18px; }
+.mid { margin-top: 40px; display: flex; flex-direction: column; align-items: center; }
+.eye { width: 100px; height: 100px; filter: drop-shadow(0 0 18px rgba(128,235,18,.35)); }
+.name { font-family: Michroma; color: #eef3ea; font-size: 46px; letter-spacing: 22px; margin: -8px 0 0 22px; }
+.cart {
+  margin-top: 22px; display: flex; align-items: center; gap: 22px;
+  font-family: Hiero; color: #80EB12;
+}
+.ring {
+  display: flex; align-items: center; gap: 6px;
+  border: 2px solid #c9a85a; border-radius: 999px; padding: 2px 22px 2px 18px;
+  font-size: 30px; position: relative;
+}
+.ring::after { content: ""; position: absolute; right: -7px; top: 8px; bottom: 8px; width: 3px; background: #c9a85a; border-radius: 2px; }
+.gloss { width: 230px; font-family: Michroma; font-size: 11px; letter-spacing: 3px; color: #8d8a76; }
+@font-face { font-family: Fira; src: url(../../android/app/src/main/assets/fonts/FiraCode_bold.ttf); }
+.agents { margin-top: 26px; display: flex; gap: 46px; align-items: flex-start; }
+.agent { width: 96px; display: flex; flex-direction: column; align-items: center; gap: 9px; }
+.agent img, .shell { width: 30px; height: 30px; }
+.agent img.mono { filter: brightness(0) invert(1); }
+.agent img.tile { border-radius: 6px; outline: 1px solid #2c2c2c; }
+.shell { font-family: Fira; color: #eef3ea; font-size: 20px; line-height: 30px; text-align: center; letter-spacing: -1px; }
+.agent span { font-family: Michroma; font-size: 9px; letter-spacing: 2px; color: #a59f84; white-space: nowrap; }
+</style></head>
+<body>
+<div class="card">
+  <div class="stars" style="left:70px;top:46px">𓇼</div>
+  <div class="stars" style="left:150px;top:180px">𓇼</div>
+  <div class="stars" style="left:96px;top:250px;font-size:13px">𓇼</div>
+  <div class="stars" style="right:80px;top:54px;font-size:14px">𓇼</div>
+  <div class="stars" style="right:150px;top:175px">𓇼</div>
+  <div class="stars" style="right:96px;top:250px;font-size:13px">𓇼</div>
+  <div class="mid">
+    <img class="eye" src="../../assets/brand/horus.svg">
+    <div class="name">HORUS</div>
+    <div class="agents">
+      <div class="agent"><img src="../../src/terminal/harness-logos/claude-code.svg"><span>CLAUDE CODE</span></div>
+      <div class="agent"><img class="mono" src="../../src/terminal/harness-logos/openai-blossom.svg"><span>CODEX</span></div>
+      <div class="agent"><img class="tile" src="../../src/terminal/harness-logos/opencode.svg"><span>OPENCODE</span></div>
+      <div class="agent"><div class="shell">&gt;_</div><span>SHELL</span></div>
+    </div>
+  </div>
+</div>
+</body></html>

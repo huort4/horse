@@ -1,0 +1,686 @@
+diff --git a/src/tracee/tracee.c b/src/tracee/tracee.c
+index 447d723..f18f129 100644
+--- a/src/tracee/tracee.c
++++ b/src/tracee/tracee.c
+@@ -23,6 +23,10 @@
+ #include <sched.h>      /* CLONE_*,  */
+ #include <sys/types.h>  /* pid_t, size_t, */
+ #include <stdlib.h>     /* NULL, */
++#include <unistd.h>     /* getpid(2), */
++#include <stdio.h>      /* snprintf(3), */
++#include <dirent.h>     /* opendir(3), readdir(3), */
++#include <limits.h>     /* INT_MAX, */
+ #include <assert.h>     /* assert(3), */
+ #include <string.h>     /* bzero(3), */
+ #include <stdbool.h>    /* bool, true, false, */
+@@ -207,6 +211,112 @@ no_mem:
+ 
+ static uint64_t next_vpid = 1;
+ 
++/* Read host IDs, including non-leader TIDs which /proc does not enumerate. */
++static bool read_child_ids(pid_t pid, int *tgid, int *ppid, int *tracer)
++{
++	char path[64];
++	char line[256];
++	FILE *file;
++
++	*tgid = *ppid = *tracer = -1;
++	snprintf(path, sizeof(path), "/proc/%d/status", pid);
++	file = fopen(path, "r");
++	if (file == NULL)
++		return false;
++	while (fgets(line, sizeof(line), file) != NULL) {
++		if (sscanf(line, "Tgid: %d", tgid) == 1
++		    || sscanf(line, "PPid: %d", ppid) == 1
++		    || sscanf(line, "TracerPid: %d", tracer) == 1)
++			continue;
++	}
++	fclose(file);
++	return *tgid > 0 && *ppid >= 0 && *tracer >= 0;
++}
++
++/*
++ * True once new_child() has set up @pid. Do not use get_tracee(): even a
++ * lookup flushes the tracee's ctx.
++ */
++static bool is_initialized_child(pid_t pid)
++{
++	Tracee *known;
++
++	LIST_FOREACH(known, &tracees, link)
++		if (known->pid == pid)
++			break;
++	return known != NULL && (known->exe != NULL || known->parent != NULL
++		|| known->sigstop != SIGSTOP_PENDING || known->terminated);
++}
++
++/*
++ * Android may withhold GETEVENTMSG. Recover an uninitialized child owned by
++ * this tracer, using host parent/thread-group relationships. A child's
++ * SIGSTOP can precede the parent's event: its pending Tracee must be reused
++ * so new_child() can inherit configuration and restart it.
++ *
++ * PID order cannot identify the event child (PIDs wrap and threads race),
++ * so a fork needs a unique candidate. Threads are interchangeable: they
++ * share the parent's memory and inherit the same PRoot state, and each one
++ * brings its own clone event, so adopting any of them now still sets up
++ * every thread exactly once. A thread pool that starts several workers at
++ * once (x264, for one) would otherwise kill the whole session.
++ */
++static pid_t find_uninitialized_child(const Tracee *parent, word_t clone_flags)
++{
++	char path[64];
++	DIR *proc;
++	struct dirent *entry;
++	pid_t found = -ESRCH;
++	int parent_tgid, parent_ppid, parent_tracer;
++	bool thread = (clone_flags & CLONE_THREAD) != 0;
++
++	if (!read_child_ids(parent->pid, &parent_tgid, &parent_ppid, &parent_tracer)
++	    || parent_tracer != getpid())
++		return -ESRCH;
++
++	if (thread)
++		snprintf(path, sizeof(path), "/proc/%d/task", parent->pid);
++	else
++		snprintf(path, sizeof(path), "/proc");
++	proc = opendir(path);
++	if (proc == NULL)
++		return -errno;
++
++	while ((entry = readdir(proc)) != NULL) {
++		char *end;
++		long candidate;
++		int tgid, ppid, tracer;
++
++		errno = 0;
++		candidate = strtol(entry->d_name, &end, 10);
++		if (errno != 0 || end == entry->d_name || *end != '\0'
++		    || candidate <= 0 || candidate > INT_MAX
++		    || candidate == parent->pid)
++			continue;
++
++		if (is_initialized_child((pid_t) candidate))
++			continue;
++		if (!read_child_ids((pid_t) candidate, &tgid, &ppid, &tracer)
++		    || tracer != getpid())
++			continue;
++		if (thread ? tgid != parent_tgid
++		    : (tgid != candidate || ppid != ((clone_flags & CLONE_PARENT)
++			? parent_ppid : parent_tgid)))
++			continue;
++
++		if (found > 0 && !thread) {
++			found = -EAGAIN;
++			break;
++		}
++		if (found <= 0)
++			found = (pid_t) candidate;
++	}
++
++	(void) closedir(proc);
++
++	return found;
++}
++
+ /**
+  * Allocate a new entry for the tracee @pid, then set its destructor
+  * and add it to the list of tracees.  This function returns NULL if
+@@ -383,7 +493,7 @@ void free_terminated_tracees()
+ int new_child(Tracee *parent, word_t clone_flags)
+ {
+ 	int ptrace_options;
+-	unsigned long pid;
++	unsigned long pid = 0;
+ 	Tracee *child;
+ 	int status;
+ 
+@@ -407,9 +517,26 @@ int new_child(Tracee *parent, word_t clone_flags)
+ 
+ 	/* Get the pid of the parent's new child.  */
+ 	status = ptrace(PTRACE_GETEVENTMSG, parent->pid, NULL, &pid);
++	/* An earlier recovery may already have adopted this thread in place of
++	 * a sibling; set up the sibling that is still waiting instead. */
++	if (status >= 0 && pid != 0 && (clone_flags & CLONE_THREAD) != 0
++	    && is_initialized_child((pid_t) pid))
++		pid = 0;
+ 	if (status < 0 || pid == 0) {
+-		note(parent, WARNING, SYSTEM, "ptrace(GETEVENTMSG)");
+-		return status;
++		int event_errno = status < 0 ? errno : EIO;
++		pid_t recovered = find_uninitialized_child(parent, clone_flags);
++		if (recovered <= 0) {
++			errno = event_errno;
++			note(parent, ERROR, SYSTEM,
++				"ptrace(GETEVENTMSG): child recovery failed (%d)", -recovered);
++			/* The event loop ignores new_child's return value. Its atexit
++			 * handler kills tracees; do not resume an untracked fork. */
++			exit(EXIT_FAILURE);
++		}
++		pid = (unsigned long) recovered;
++		VERBOSE(parent, 1,
++			"ptrace(GETEVENTMSG) unavailable; recovered child pid %lu from /proc",
++			pid);
+ 	}
+ 
+ 	child = get_tracee(parent, (pid_t) pid, true);
+diff --git a/src/syscall/enter.c b/src/syscall/enter.c
+index 93f4306..c82cf7d 100644
+--- a/src/syscall/enter.c
++++ b/src/syscall/enter.c
+@@ -1808,6 +1808,19 @@ static void maybe_redirect_userns_file(Tracee *tracee, Reg reg)
+ 	(void) set_sysarg_path(tracee, "/dev/null", reg);
+ }
+ 
++static bool disable_proc_fd_access(Tracee *tracee, Reg path_reg)
++{
++	char path[PATH_MAX];
++
++	if (getenv("PROOT_NO_O_TMPFILE") == NULL)
++		return false;
++	if (get_sysarg_path(tracee, path, path_reg) < 0)
++		return false;
++
++	return strcmp(path, "/proc/self/fd") == 0
++		|| strcmp(path, "/proc/self/fd/") == 0;
++}
++
+ /**
+  * Translate the input arguments of the current @tracee's syscall in the
+  * @tracee->pid process area. This function sets @tracee->status to
+@@ -1979,7 +1992,7 @@ int translate_syscall_enter(Tracee *tracee)
+ 			break;
+ 
+ 		poke_reg(tracee, SYSARG_2, address);
+-		poke_reg(tracee, SYSARG_3, sizeof(struct sockaddr_un));
++		poke_reg(tracee, SYSARG_3, status);
+ 
+ 		status = 0;
+ 		break;
+@@ -2332,6 +2345,8 @@ int translate_syscall_enter(Tracee *tracee)
+ 		if (status <= 0)
+ 			break;
+ 
++		const int translated_size = status;
++
+ 		/* These parameters are used/restored at the exit stage.  */
+ 		poke_reg(tracee, SYSARG_5, sock_addr_saved);
+ 		poke_reg(tracee, SYSARG_6, size);
+@@ -2339,7 +2354,7 @@ int translate_syscall_enter(Tracee *tracee)
+ 		/* Remember: POKE_WORD puts -errno in status and breaks if an
+ 		 * error occured.  */
+ 		POKE_WORD(SYSARG_ADDR(2), sock_addr);
+-		POKE_WORD(SYSARG_ADDR(3), sizeof(struct sockaddr_un));
++		POKE_WORD(SYSARG_ADDR(3), translated_size);
+ 
+ 		status = 0;
+ 		break;
+@@ -2350,6 +2365,16 @@ int translate_syscall_enter(Tracee *tracee)
+ #undef POKE_WORD
+ 
+ 	case PR_access:
++		if (disable_proc_fd_access(tracee, SYSARG_1)) {
++			poke_reg(tracee, SYSARG_RESULT, (word_t) -ENOENT);
++			set_sysnum(tracee, PR_void);
++			status = 0;
++			break;
++		}
++
++		status = translate_sysarg(tracee, SYSARG_1, REGULAR);
++		break;
++
+ 	case PR_acct:
+ 	case PR_chmod:
+ 	case PR_chown:
+@@ -2508,6 +2533,13 @@ int translate_syscall_enter(Tracee *tracee)
+ 	case PR_fchmodat:
+ 	case PR_faccessat:
+ 	case PR_faccessat2:
++		if (disable_proc_fd_access(tracee, SYSARG_2)) {
++			poke_reg(tracee, SYSARG_RESULT, (word_t) -ENOENT);
++			set_sysnum(tracee, PR_void);
++			status = 0;
++			break;
++		}
++
+ 	case PR_futimesat:
+ 	case PR_mknodat:
+ 		dirfd = peek_reg(tracee, CURRENT, SYSARG_1);
+diff --git a/src/tracee/seccomp.c b/src/tracee/seccomp.c
+index 6a4e1f8..9a7f8dd 100644
+--- a/src/tracee/seccomp.c
++++ b/src/tracee/seccomp.c
+@@ -3,6 +3,9 @@
+ #include <unistd.h>    /* getpgid, */
+ #include <utime.h>     /* utimbuf, */
+ #include <sys/vfs.h>   /* statfs64 */
++#include <talloc.h>    /* talloc_*, */
++#include <fcntl.h>     /* AT_FDCWD, */
++#include <limits.h>    /* PATH_MAX, */
+ #include <string.h>    /* memset   */
+ #include <linux/net.h> /* SYS_SENDMMSG */
+ #include <assert.h>    /* assert(3), */
+@@ -258,6 +261,13 @@
+ 		poke_reg(tracee, SYSARG_4, 0);
+ 		restart_syscall_after_seccomp(tracee);
+ 		break;
++	case PR_fchmodat:
++		/* Samsung's app seccomp policy traps fchmodat with ENOSYS. PRoot
++		 * only needs the chmod side effect for its temporary staging path;
++		 * treating this outer-filter event as a successful no-op preserves
++		 * the guest operation and avoids aborting the probe. */
++		set_result_after_seccomp(tracee, 0);
++		break;
+ 
+ 	case PR_chown:
+ 	case PR_lchown:
+ 	case PR_chown32:
+@@ -623,9 +633,119 @@
+ 		if (sxid != sxid_ && sxid != -1)
+ 			ret = -EPERM;
+ 		set_result_after_seccomp(tracee, ret);
++		break;
++	}
++
++	case PR_chdir:
++	{
++		char path[PATH_MAX];
++		char translated[PATH_MAX];
++		int size;
++
++		size = read_string(tracee, path, peek_reg(tracee, ORIGINAL, SYSARG_1), PATH_MAX);
++		if (size < 0) {
++			set_result_after_seccomp(tracee, size);
++			break;
++		}
++		if (size >= PATH_MAX) {
++			set_result_after_seccomp(tracee, -ENAMETOOLONG);
++			break;
++		}
++
++		ret = translate_path(tracee, translated, AT_FDCWD, path, true);
++		if (ret < 0) {
++			set_result_after_seccomp(tracee, ret);
++			break;
++		}
++
++		set_result_after_seccomp(tracee, 0);
++		ret = detranslate_path(tracee, translated, NULL);
++		if (ret >= 0) {
++			chop_finality(translated);
++			char *cwd = talloc_strdup(tracee->fs, translated);
++			if (cwd != NULL) {
++				TALLOC_FREE(tracee->fs->cwd);
++				tracee->fs->cwd = cwd;
++				talloc_set_name_const(tracee->fs->cwd, "$cwd");
++			}
++		}
++		break;
++	}
++
++	case PR_fchdir:
++	{
++		char translated[PATH_MAX];
++		int dirfd = peek_reg(tracee, ORIGINAL, SYSARG_1);
++
++		ret = translate_path(tracee, translated, dirfd, ".", true);
++		if (ret < 0) {
++			set_result_after_seccomp(tracee, ret);
++			break;
++		}
++
++		set_result_after_seccomp(tracee, 0);
++		ret = detranslate_path(tracee, translated, NULL);
++		if (ret >= 0) {
++			chop_finality(translated);
++			char *cwd = talloc_strdup(tracee->fs, translated);
++			if (cwd != NULL) {
++				TALLOC_FREE(tracee->fs->cwd);
++				tracee->fs->cwd = cwd;
++				talloc_set_name_const(tracee->fs->cwd, "$cwd");
++			}
++		}
+ 		break;
+ 	}
+ 
++	case PR_getcwd:
++	{
++		char path[PATH_MAX];
++		word_t output = peek_reg(tracee, ORIGINAL, SYSARG_1);
++		size_t size = (size_t) peek_reg(tracee, ORIGINAL, SYSARG_2);
++		if (size == 0) {
++			set_result_after_seccomp(tracee, -EINVAL);
++			break;
++		}
++
++		ret = translate_path(tracee, path, AT_FDCWD, ".", false);
++		if (ret < 0) {
++			set_result_after_seccomp(tracee, ret);
++			break;
++		}
++		size_t cwdSize = strlen(tracee->fs->cwd) + 1;
++		if (size < cwdSize) {
++			set_result_after_seccomp(tracee, -ERANGE);
++			break;
++		}
++		ret = write_data(tracee, output, tracee->fs->cwd, cwdSize);
++		set_result_after_seccomp(tracee, ret < 0 ? ret : (word_t) cwdSize);
++		break;
++	}
++
++	case PR_faccessat:
++		set_result_after_seccomp(tracee, 0);
++		break;
++
++	case PR_faccessat2:
++		set_sysnum(tracee, PR_faccessat);
++		poke_reg(tracee, SYSARG_4, 0);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_renameat2:
++		set_sysnum(tracee, PR_renameat);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_setuid:
++	case PR_setgid:
++	case PR_setreuid:
++	case PR_setregid:
++	case PR_setfsuid:
++	case PR_setfsgid:
++		set_result_after_seccomp(tracee, 0);
++		break;
++
+ 	case PR_set_robust_list:
+ 	default:
+ 		/* Set errno to -ENOSYS */
+diff --git a/src/extension/ashmem_memfd/ashmem_memfd.c b/src/extension/ashmem_memfd/ashmem_memfd.c
+index 8ddf27a..9ef4d25 100644
+--- a/src/extension/ashmem_memfd/ashmem_memfd.c
++++ b/src/extension/ashmem_memfd/ashmem_memfd.c
+@@ -3,6 +3,7 @@
+ #include <stdlib.h>
+ #include <signal.h>
+ #include <unistd.h>
++#include <string.h>
+ #include <sys/syscall.h>  /* __NR_memfd_create,  */
+ #include <linux/ashmem.h> /* ASHMEM_GET_SIZE,  */
+ #include <linux/memfd.h>  /* MFD_CLOEXEC  */
+diff --git a/src/extension/sysvipc/sysvipc_shm.c b/src/extension/sysvipc/sysvipc_shm.c
+index 5c4d812..d6d4710 100644
+--- a/src/extension/sysvipc/sysvipc_shm.c
++++ b/src/extension/sysvipc/sysvipc_shm.c
+@@ -29,6 +29,17 @@
+ 
+ #if defined(WITH_LIBANDROID_SHMEM)
+ #include <sys/shm.h>
++
++/* Termux's libandroid-shmem exports the System V compatibility entry points,
++ * but the Android NDK hides the platform declarations when compiling for an
++ * API level below 26. Keep the dependency explicit so the Android PRoot
++ * build does not silently bind to unavailable bionic symbols. */
++extern int libandroid_shmget(key_t key, size_t size, int shmflg);
++extern int libandroid_shmctl(int shmid, int cmd, struct shmid_ds *buf);
++extern int libandroid_shmat_fd(int shmid, size_t *out_size);
++extern int libandroid_shmdt_fd(int fd);
++#define shmget libandroid_shmget
++#define shmctl libandroid_shmctl
+ #endif
+diff --git a/src/extension/fake_id0/fake_id0.c b/src/extension/fake_id0/fake_id0.c
+index 9bd8dad..abd513d 100644
+--- a/src/extension/fake_id0/fake_id0.c
++++ b/src/extension/fake_id0/fake_id0.c
+@@ -532,6 +532,24 @@ static int adjust_elf_auxv(Tracee *tracee, Config *config)
+ 	return 0;
+ }
+ 
++static bool is_owner_change(word_t sysnum) {
++	switch (sysnum) {
++	case PR_chmod:
++	case PR_fchmod:
++	case PR_fchmodat:
++	case PR_chown:
++	case PR_chown32:
++	case PR_fchown:
++	case PR_fchown32:
++	case PR_lchown:
++	case PR_lchown32:
++	case PR_fchownat:
++		return true;
++	default:
++		return false;
++	}
++}
++
+ static int handle_perm_err_exit_end(Tracee *tracee, Config *config, bool even_if_not_root) {
+ 	word_t result;
+ 
+@@ -551,6 +569,15 @@ static int handle_perm_err_exit_end(Tracee *tracee, Config *config, bool even_if
+ 	if ((int) result != -EPERM && (int) result != -EACCES)
+ 		return 0;
+ 
++	/* Horus: every guest file really belongs to the app, so the kernel's
++	 * owner checks pass and EACCES from chown/chmod is in practice
++	 * Android's SELinux policy (e.g. on /dev/pts entries, which sshd must
++	 * chown for each login). Report success for any guest user, as for
++	 * root; EPERM keeps the emulated rules below.  */
++	if ((int) result == -EACCES && is_owner_change(get_sysnum(tracee, ORIGINAL))) {
++		poke_reg(tracee, SYSARG_RESULT, 0);
++		return 0;
++	}
++
+ 	/* Force success if the tracee was supposed to have
+ 	 * the capability.  */
+ 	if (even_if_not_root || config->euid == 0) /* TODO: || HAS_CAP(...) */
+diff --git a/src/extension/link2symlink/link2symlink.c b/src/extension/link2symlink/link2symlink.c
+--- a/src/extension/link2symlink/link2symlink.c
++++ b/src/extension/link2symlink/link2symlink.c
+@@ -111,6 +111,7 @@
+ static char l2s_directory[PATH_MAX];
+ static size_t l2s_directory_length;
+ static int l2s_directory_fd = -1;
++static int l2s_lock_fd = -1;
+ static bool l2s_directory_known;
+ 
+ /**
+@@ -155,6 +156,31 @@
+  * a symbolic link left under that name is a refusal and not something
+  * to follow.
+  */
++/* POSIX locks interoperate with the Android/JVM FileChannel collector.
++ * Keep the shared lock in the tracer until exit; do not use flock(2), which
++ * is a different lock namespace on Linux. Opening relative to the pinned
++ * directory with O_NOFOLLOW also prevents lock-path symlink escapes. */
++static int lock_l2s_directory(int directory_fd)
++{
++	struct flock lock = { .l_type = F_RDLCK, .l_whence = SEEK_SET };
++	struct stat info;
++	int fd = openat(directory_fd, ".gc.lock", O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0600);
++	if (fd < 0)
++		return -errno;
++	if (fstat(fd, &info) < 0 || !S_ISREG(info.st_mode)) {
++		close(fd);
++		return -EINVAL;
++	}
++	while (fcntl(fd, F_SETLKW, &lock) < 0) {
++		if (errno == EINTR)
++			continue;
++		int error = errno;
++		close(fd);
++		return -error;
++	}
++	return fd;
++}
++
+ static int open_l2s_directory(void)
+ {
+ 	if (l2s_directory_fd >= 0)
+@@ -168,6 +194,12 @@
+ 	if (l2s_directory_fd < 0)
+ 		return errno > 0 ? -errno : -ENOENT;
+ 
++	l2s_lock_fd = lock_l2s_directory(l2s_directory_fd);
++	if (l2s_lock_fd < 0) {
++		close(l2s_directory_fd);
++		l2s_directory_fd = -1;
++		return l2s_lock_fd;
++	}
+ 	return l2s_directory_fd;
+ }
+ 
+@@ -294,7 +326,7 @@
+ 		? readlink(symlink, value, PATH_MAX)
+ 		: readlinkat(dir_fd, name, value, PATH_MAX);
+ 	if (size < 0)
+-		return size;
++		return errno > 0 ? -errno : -EINVAL;
+ 	if (size >= PATH_MAX)
+ 		return -ENAMETOOLONG;
+ 	value[size] = '\0';
+@@ -849,9 +881,13 @@
+ 		if (!S_ISLNK(statl.st_mode))
+ 			return 0;
+ 
++		/* Horus: a faked hard link whose intermediate or final file is
++		 * gone (e.g. `rm -rf` reached the .l2s entries first) is left
++		 * as the plain symlink it is, so it can still be stat'ed and
++		 * removed; failing here made it undeletable with EPERM.  */
+ 		size = my_readlink(original, intermediate);
+ 		if (size < 0)
+-			return size;
++			return 0;
+ 
+ 		name = strrchr(intermediate, '/');
+ 		if (name == NULL)
+@@ -864,11 +900,11 @@
+ 
+ 		intermediate_proc: size = my_readlink(intermediate, final);
+ 		if (size < 0)
+-			return size;
++			return 0;
+ 
+ 		final_proc: status = lstat(final,&finalStat);
+ 		if (status < 0)
+-			return status;
++			return 0;
+ 
+ 		finalStat.st_nlink = atoi(final + strlen(final) - 4);
+ 
+@@ -1145,6 +1181,11 @@
+ 			FILTERED_SYSNUM_END,
+ 		};
+ 		extension->filtered_sysnums = filtered_sysnums;
++		if (get_l2s_directory()) {
++			status = open_l2s_directory();
++			if (status < 0)
++				return status;
++		}
+ 		return 0;
+ 	}
+ 
+diff --git a/src/syscall/socket.c b/src/syscall/socket.c
+index ec74950..7fea3ad 100644
+--- a/src/syscall/socket.c
++++ b/src/syscall/socket.c
+@@ -88,8 +88,8 @@ static int read_sockaddr_un(Tracee *tracee, struct sockaddr_un *sockaddr, word_t
+  * in the @tracee memory at the given @address.  See the documentation
+  * of read_sockaddr_un() for the meaning of the @size parameter.
+  * Also, the new address of the translated sockaddr_un is put in the
+- * @address parameter.  This function returns -errno if an error
+- * occurred, otherwise 0.
++ * @address parameter.  This function returns -errno on error, 0 when no translation is needed,
++ * otherwise the translated sockaddr length (including its terminating NUL).
+  */
+ int translate_socketcall_enter(Tracee *tracee, word_t *address, int size)
+ {
+@@ -144,6 +144,7 @@ int translate_socketcall_enter(Tracee *tracee, word_t *address, int size)
+ 		/* Let's use this shorter path now.  */
+ 		strcpy(host_path, shorter_host_path);
+ 	}
++	bzero(sockaddr.sun_path, sizeof_path);
+ 	strncpy(sockaddr.sun_path, host_path, sizeof_path);
+ 
+ 	/* Push the updated sockaddr to a newly allocated space.  */
+@@ -155,7 +156,9 @@ int translate_socketcall_enter(Tracee *tracee, word_t *address, int size)
+ 	if (status < 0)
+ 		return status;
+ 
+-	return 1;
++	/* The kernel must see the host pathname length, not the guest addrlen.
++	 * A full 108-byte sun_path is legal without a terminating NUL. */
++	return offsetof_path + MIN(strlen(host_path) + 1, sizeof_path);
+ }
+ 
+ /**
+diff --git a/src/tracee/event.c b/src/tracee/event.c
+index df953ee..85187e5 100644
+--- a/src/tracee/event.c
++++ b/src/tracee/event.c
+@@ -249,7 +249,9 @@ static void print_talloc_hierarchy(int signum, siginfo_t *siginfo UNUSED, void *
+ 	}
+ }
+ 
+-static int last_exit_status = -1;
++#include "tracee/exit_status.h"
++
++static ProotExitStatus exit_status = { -1, -1 };
+ 
+ /**
+  * Check if this instance of PRoot can *technically* handle @tracee.
+@@ -433,7 +435,7 @@ int event_loop()
+ 		(void) restart_tracee(tracee, signal);
+ 	}
+ 
+-	return last_exit_status;
++	return get_proot_exit_status(&exit_status);
+ }
+ 
+ /**
+@@ -477,11 +479,11 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
+ 	/* Not a signal-stop by default.  */
+ 	signal = 0;
+ 
++	record_proot_exit_status(&exit_status, tracee->vpid, tracee_status);
+ 	if (WIFEXITED(tracee_status)) {
+-		last_exit_status = WEXITSTATUS(tracee_status);
+ 		VERBOSE(tracee, 1,
+ 			"vpid %" PRIu64 ": exited with status %d",
+-			tracee->vpid, last_exit_status);
++			tracee->vpid, WEXITSTATUS(tracee_status));
+ 		terminate_tracee(tracee);
+ 	}
+ 	else if (WIFSIGNALED(tracee_status)) {
+diff --git a/src/tracee/exit_status.h b/src/tracee/exit_status.h
+new file mode 100644
+index 0000000..b19d8f9
+--- /dev/null
++++ b/src/tracee/exit_status.h
+@@ -0,0 +1,27 @@
++/* Preserve the initial guest process status independently of helper children. */
++#ifndef PROOT_EXIT_STATUS_H
++#define PROOT_EXIT_STATUS_H
++#include <stdint.h>
++#include <sys/wait.h>
++
++typedef struct {
++    int last_child;
++    int initial_guest;
++} ProotExitStatus;
++
++static inline void record_proot_exit_status(ProotExitStatus *state, uint64_t vpid, int status)
++{
++    if (WIFEXITED(status)) {
++        state->last_child = WEXITSTATUS(status);
++        if (vpid == 1)
++            state->initial_guest = state->last_child;
++    } else if (WIFSIGNALED(status) && vpid == 1) {
++        state->initial_guest = 128 + WTERMSIG(status);
++    }
++}
++
++static inline int get_proot_exit_status(const ProotExitStatus *state)
++{
++    return state->initial_guest >= 0 ? state->initial_guest : state->last_child;
++}
++#endif

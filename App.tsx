@@ -1,0 +1,747 @@
+import React from 'react';
+import {AppState} from 'react-native';
+import {activateRootfs, importRootfs, installRootfs, readProvisionProgress, readTerminalRuntimeStatus} from './src/terminal/runtimeStatus';
+import {rootfsForDistro} from './src/terminal/distroContract';
+import {TerminalScreen} from './src/terminal/TerminalScreen';
+import {buildZshCommand, shellQuote} from './src/terminal/commandFactory';
+import {TerminalSessionClient} from './src/terminal/session/sessionClient';
+import type {ActiveTerminalSession} from './src/terminal/session/sessionContract';
+import {listGuestDirectory} from './src/files/fileExplorer';
+import {githubRepositoryError, listGithubRepositories, type GithubAccount} from './src/projects/githubRepositories';
+import {clearStoredGithubAccount, readStoredGithubAccount, saveGithubAccount} from './src/projects/githubAccountStore';
+import {GITHUB_AUTH_LOGIN_COMMAND, openGithubDeviceLoginUrl} from './src/projects/githubDeviceLogin';
+import type {ProjectSummary} from './src/projects/projectTypes';
+import {WORKSPACE_PROJECTS_DIRECTORY, buildProjectCloneCommand, harnessSessionTarget, printHiddenMarker, workspaceProjectDirectory} from './src/projects/projectCommands';
+import {DISTRO_NAMES, LINUX_DISTROS, dismissAccountIntro, lockedOutMessage, readUserProfile, updateUserProfile, verifyUserPassword, type LinuxDistro, type ProfileUser, type UserProfile} from './src/profile/profileStore';
+import {setupOnboardingProfile} from './src/profile/onboardingSetup';
+import {readDownloadSources, writeDownloadSources} from './src/terminal/downloadSources';
+import {LoadingScreen} from './src/ui/LoadingScreen';
+import {MetroHomeScreen, type MetroLaunchTarget} from './src/ui/MetroHomeScreen';
+import {OnboardingScreen, type OnboardingActions, type RootfsSetupResult} from './src/ui/OnboardingScreen';
+import {AddUserScreen} from './src/ui/AddUserScreen';
+import {ProjectHubScreen} from './src/ui/ProjectHubScreen';
+import {LoginScreen} from './src/ui/LoginScreen';
+import {FileExplorerScreen} from './src/ui/FileExplorerScreen';
+import {GithubAccountScreen} from './src/ui/GithubAccountScreen';
+import {SessionSettingsScreen} from './src/ui/SessionSettingsScreen';
+import {UserAccountScreen} from './src/ui/UserAccountScreen';
+import {useHardwareBack} from './src/ui/useHardwareBack';
+import {useBackgroundSessionLock} from './src/profile/sessionTimeout';
+import {updateUnlockGrant, useUnlockGrantAppState} from './src/profile/unlockGrant';
+import {setRemoteAccessEnabled} from './src/remote/remoteAccess';
+import {consumeLaunchSessionId} from './src/terminal/session/launchSession';
+import {sessionTitle} from './src/terminal/toolchainLabels';
+import {createRequestIdFactory} from './src/terminal/requestIds';
+
+type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'user' | 'add-user' | 'github-account' | 'projects' | 'files' | 'terminal';
+type BootState = 'checking' | 'installing' | 'error';
+
+const BOOT_REQUEST_ID = 'horus-bootstrap-1';
+const IMPORT_REQUEST_ID = 'horus-import-1';
+const ACTIVATE_REQUEST_ID = 'horus-activate-1';
+
+/** The catalog rootfs id of a distribution; every distribution Horus offers has one. */
+function rootfsIdFor(distro: LinuxDistro): string {
+  const entry = rootfsForDistro(distro);
+  if (entry === undefined) throw new Error(`no rootfs for ${distro}`);
+  return entry.rootfsId;
+}
+const nextSessionRequestId = createRequestIdFactory('launcher');
+const BARE_SHELL_COMMAND = buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECTORY} && cd ${WORKSPACE_PROJECTS_DIRECTORY} && exec zsh -l`);
+
+/** The one terminal whose hidden completion marker App is waiting for. */
+type PendingCompletion =
+  | Readonly<{kind: 'clone'; marker: string; name: string; directory: string; harness: MetroLaunchTarget}>
+  | Readonly<{kind: 'github-login'; marker: string; returnTo: 'home' | 'projects'}>
+  | Readonly<{kind: 'github-logout'; marker: string}>;
+
+function isHarnessTarget(target: MetroLaunchTarget): boolean {
+  return target.sessionId === undefined && (
+    target.toolchain === 'claude' || target.toolchain === 'codex' || target.toolchain === 'opencode'
+  );
+}
+
+function App(): React.JSX.Element {
+  const [route, setRoute] = React.useState<AppRoute>('boot');
+  const routeRef = React.useRef(route);
+  routeRef.current = route;
+  const [bootState, setBootState] = React.useState<BootState>('checking');
+  const [runtimeReady, setRuntimeReady] = React.useState(false);
+  const [bootError, setBootError] = React.useState<string | undefined>();
+  const [profile, setProfile] = React.useState<UserProfile | null>(null);
+  // The distribution new sessions run in, which says who is signed in.
+  const [activeDistro, setActiveDistro] = React.useState<string | undefined>();
+  const [profileError, setProfileError] = React.useState<string | undefined>();
+  const [lockNotice, setLockNotice] = React.useState<string | undefined>();
+  const [terminalTarget, setTerminalTarget] = React.useState<MetroLaunchTarget>({
+    title: 'Bare terminal',
+    eyebrow: 'SHELL',
+    command: BARE_SHELL_COMMAND,
+    toolchain: 'shell',
+  });
+  const [terminalInstanceKey, setTerminalInstanceKey] = React.useState(0);
+  const [terminalReturnRoute, setTerminalReturnRoute] = React.useState<'home' | 'projects'>('home');
+  const [selectedHarness, setSelectedHarness] = React.useState<MetroLaunchTarget | undefined>();
+  const [projectConnected, setProjectConnected] = React.useState(false);
+  const projectConnectedRef = React.useRef(projectConnected);
+  projectConnectedRef.current = projectConnected;
+  const [projects, setProjects] = React.useState<readonly ProjectSummary[]>([]);
+  const [githubAccount, setGithubAccount] = React.useState<GithubAccount | undefined>();
+  const [githubAccountError, setGithubAccountError] = React.useState<string | undefined>();
+  const [githubRepositoriesLoaded, setGithubRepositoriesLoaded] = React.useState(false);
+  const [projectLoading, setProjectLoading] = React.useState(false);
+  const [projectError, setProjectError] = React.useState<string | undefined>();
+  // Which route refreshes on arrival, and whether it also queries GitHub.
+  const [autoRefresh, setAutoRefresh] = React.useState<Readonly<{route: 'home' | 'projects'; github: boolean}> | undefined>();
+  // Callbacks read the ref so they see a marker set earlier in the same
+  // event; the state copy drives the held terminal's render.
+  const [pendingCompletion, setPendingCompletionState] = React.useState<PendingCompletion | undefined>();
+  const pendingCompletionRef = React.useRef(pendingCompletion);
+  const setPendingCompletion = React.useCallback((next: PendingCompletion | undefined) => {
+    pendingCompletionRef.current = next;
+    setPendingCompletionState(next);
+  }, []);
+  const projectLoadingRef = React.useRef(false);
+  const queuedGithubRefreshRef = React.useRef(false);
+  const refreshGithubRepositoriesRef = React.useRef<() => Promise<void>>(async () => undefined);
+  const manualWorkspaceRefreshRef = React.useRef(0);
+  const [retryCount, setRetryCount] = React.useState(0);
+  const sessionClient = React.useMemo(() => new TerminalSessionClient(), []);
+  const appMountedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    appMountedRef.current = true;
+    return () => {
+      appMountedRef.current = false;
+      queuedGithubRefreshRef.current = false;
+      sessionClient.dispose();
+    };
+  }, [sessionClient]);
+
+  const openTerminal = React.useCallback((target: MetroLaunchTarget, returnRoute: 'home' | 'projects' = 'home') => {
+    setTerminalTarget(target);
+    setTerminalInstanceKey(value => value + 1);
+    setTerminalReturnRoute(returnRoute);
+    setRoute('terminal');
+  }, []);
+
+  const openDebugTerminal = React.useCallback(() => {
+    if (!__DEV__) return;
+    // Bootstrap owns installation and PRoot readiness. Keep the loading route
+    // mounted while it is in flight so the terminal cannot launch a second
+    // status/install request against the same native runtime.
+    if (bootState === 'checking' || bootState === 'installing') return;
+    openTerminal({title: 'Bare terminal', eyebrow: 'DEBUG / SHELL', command: BARE_SHELL_COMMAND, toolchain: 'shell'});
+  }, [bootState, openTerminal]);
+
+  React.useEffect(() => {
+    let mounted = true;
+    const bootstrap = async () => {
+      setBootState('checking');
+      setBootError(undefined);
+      setRuntimeReady(false);
+      const existingProfile = await readUserProfile();
+      if (!mounted) return;
+      setProfile(existingProfile);
+      const storedGithubAccount = await readStoredGithubAccount();
+      if (!mounted) return;
+      setGithubAccount(storedGithubAccount);
+      setProjectConnected(storedGithubAccount !== undefined);
+
+      let runtime = await readTerminalRuntimeStatus();
+      if (!mounted) return;
+      if (runtime.kind === 'error') {
+        setBootState('error');
+        setBootError(runtime.errorCode);
+        return;
+      }
+      if (runtime.runtimeState === 'not_installed' && existingProfile === null && !__DEV__) {
+        // First run: onboarding downloads Alpine as one of its steps.
+        setRoute('onboarding');
+        return;
+      }
+      if (runtime.runtimeState === 'not_installed') {
+        setBootState('installing');
+        const installed = await installRootfs(BOOT_REQUEST_ID);
+        if (!mounted) return;
+        if (installed.kind !== 'success') {
+          setBootState('error');
+          setBootError(installed.errorCode);
+          return;
+        }
+        runtime = await readTerminalRuntimeStatus();
+        if (!mounted) return;
+        if (runtime.kind === 'error') {
+          setBootState('error');
+          setBootError(runtime.errorCode);
+          return;
+        }
+      }
+      if (!runtime.prootAvailable) {
+        setBootState('error');
+        setBootError('proot_unavailable');
+        return;
+      }
+      // Android may have reclaimed only this UI process while the terminal
+      // service kept the user's sessions (and their unlock) alive.
+      const stillUnlocked = !__DEV__ && existingProfile !== null && await updateUnlockGrant('resume');
+      if (!mounted) return;
+      setRuntimeReady(true);
+      setActiveDistro(runtime.activeDistro);
+      setRoute(__DEV__ ? 'terminal' : existingProfile === null ? 'onboarding' : stillUnlocked ? 'home' : 'login');
+    };
+    void bootstrap();
+    return () => {
+      mounted = false;
+    };
+  }, [retryCount]);
+
+  // Onboarding's rootfs step; on success the runtime is ready like after boot.
+  const finishOnboardingRootfs = React.useCallback(async (installed: Awaited<ReturnType<typeof installRootfs>>): Promise<RootfsSetupResult> => {
+    if (installed.kind !== 'success') return {kind: 'error', errorCode: installed.errorCode};
+    const runtime = await readTerminalRuntimeStatus();
+    if (runtime.kind === 'error') return {kind: 'error', errorCode: runtime.errorCode};
+    if (!runtime.prootAvailable) return {kind: 'error', errorCode: 'proot_unavailable'};
+    setRuntimeReady(true);
+    return {kind: 'success'};
+  }, []);
+
+  const onboardingActions = React.useMemo<OnboardingActions>(() => ({
+    installRootfs: async distro => finishOnboardingRootfs(await installRootfs(BOOT_REQUEST_ID, undefined, {rootfsId: rootfsIdFor(distro)})),
+    importRootfs: async distro => finishOnboardingRootfs(await importRootfs(IMPORT_REQUEST_ID, undefined, {rootfsId: rootfsIdFor(distro)})),
+    readToolsProgress: () => readProvisionProgress(),
+    saveProfile: async (newUser, {skipTools, onToolsReady}) => {
+      const setup = await setupOnboardingProfile(newUser, nextSessionRequestId('onboarding-shell'), {onToolsReady, skipTools});
+      if (setup.kind === 'success') {
+        void updateUnlockGrant('grant');
+        setLockNotice(undefined);
+        const user: ProfileUser = {distro: newUser.distro, username: newUser.username, avatar: newUser.avatar};
+        setProfile({users: [user]});
+        setActiveDistro(newUser.distro);
+      }
+      return setup;
+    },
+    readDownloadSources: async () => {
+      const result = await readDownloadSources();
+      return result.kind === 'success' ? result.sources : {};
+    },
+    saveDownloadSources: async sources => (await writeDownloadSources(sources)).kind === 'success',
+    done: () => {
+      setProfileError(undefined);
+      setRoute('home');
+    },
+  }), [finishOnboardingRootfs]);
+
+  // Signing in as a user also points new sessions at that user's distribution.
+  const login = React.useCallback(async (user: ProfileUser, password: string) => {
+    if (profile === null) {
+      setProfileError('Incorrect password.');
+      return;
+    }
+    const check = await verifyUserPassword(user.distro, password);
+    if (check.kind !== 'success') {
+      setProfileError(check.kind === 'locked' ? lockedOutMessage(check.retryAfterMs) : 'Incorrect password.');
+      return;
+    }
+    // Sessions belong to whoever started them: switching user ends them, so
+    // the new user never sees or reattaches to the previous user's shells.
+    if (activeDistro !== undefined && activeDistro !== user.distro) {
+      const stopped = await sessionClient.stopAllTerminalSessions(nextSessionRequestId('switch-user'), 'user_stop');
+      if (stopped.kind !== 'applied') {
+        setProfileError('Couldn’t stop the other user’s sessions. Try again.');
+        return;
+      }
+      setPendingCompletion(undefined);
+    }
+    const activated = await activateRootfs(ACTIVATE_REQUEST_ID, rootfsIdFor(user.distro));
+    if (activated.kind !== 'success') {
+      setProfileError(activated.errorCode === 'not_installed'
+        ? `${DISTRO_NAMES[user.distro]} isn’t installed anymore. Sign in as another user, or reinstall it from Settings.`
+        : `Couldn’t switch to ${DISTRO_NAMES[user.distro]} (${activated.errorCode}).`);
+      return;
+    }
+    void updateUnlockGrant('grant');
+    setActiveDistro(user.distro);
+    setProfileError(undefined);
+    setLockNotice(undefined);
+    setRoute('home');
+  }, [profile, activeDistro, sessionClient, setPendingCompletion]);
+
+  // Locking only hides the workspace. Running harnesses and shells keep
+  // working behind the password screen and are in Recents after unlock.
+  const lockSession = React.useCallback(() => {
+    setProfileError(undefined);
+    setLockNotice('Horus locked after 15 minutes in the background. Your sessions are still running.');
+    void updateUnlockGrant('revoke');
+    setRoute('login');
+  }, []);
+
+  // Logging out ends every session, unlike the background lock.
+  const [loginUser, setLoginUser] = React.useState<LinuxDistro | undefined>();
+  const logout = React.useCallback(async (next?: ProfileUser): Promise<boolean> => {
+    // Disable persistent SSH opt-in before the service acknowledges shutdown,
+    // so it cannot restart the server while the user is logged out.
+    if (next === undefined) {
+      const remote = await setRemoteAccessEnabled(false);
+      if (remote.kind !== 'success') return false;
+    }
+    const stopped = await sessionClient.stopAllTerminalSessions(nextSessionRequestId('logout'), 'user_stop');
+    if (stopped.kind !== 'applied') return false;
+    setPendingCompletion(undefined);
+    setProfileError(undefined);
+    setLockNotice(undefined);
+    // Switching to a user opens sign in on their password.
+    setLoginUser(next?.distro);
+    void updateUnlockGrant('revoke');
+    setRoute(__DEV__ ? 'home' : 'login');
+    return true;
+  }, [sessionClient, setPendingCompletion]);
+
+  const authenticated = route === 'home' || route === 'settings' || route === 'user' || route === 'add-user' || route === 'github-account' || route === 'projects' || route === 'files' || route === 'terminal';
+  useBackgroundSessionLock(!__DEV__ && profile !== null && authenticated, lockSession);
+  useUnlockGrantAppState(!__DEV__ && profile !== null && authenticated);
+
+  const leaveTerminal = React.useCallback(() => {
+    const pending = pendingCompletionRef.current;
+    if (pending !== undefined && pending.marker === terminalTarget.completionMarker) {
+      // Clone and logout hold the terminal until their marker or a failure.
+      if (pending.kind !== 'github-login') return;
+      setPendingCompletion(undefined);
+    }
+    setRoute(terminalReturnRoute);
+  }, [setPendingCompletion, terminalReturnRoute, terminalTarget.completionMarker]);
+
+  const leaveProjects = React.useCallback(() => setRoute('home'), []);
+
+  const leaveGithubAccount = React.useCallback(() => setRoute('home'), []);
+
+  useHardwareBack(route === 'terminal', leaveTerminal);
+  useHardwareBack(route === 'projects', leaveProjects);
+  useHardwareBack(route === 'github-account', leaveGithubAccount);
+
+  const openTarget = React.useCallback((target: MetroLaunchTarget) => {
+    if (target.kind === 'files') {
+      setRoute('files');
+      return;
+    }
+    if (isHarnessTarget(target)) {
+      setSelectedHarness(target);
+      setProjectError(undefined);
+      // Without a saved account the query can only fail, so the chooser
+      // waits for the user to connect instead of showing that error.
+      setAutoRefresh({route: 'projects', github: projectConnectedRef.current});
+      setRoute('projects');
+      return;
+    }
+    openTerminal(target, target.returnTo ?? 'home');
+  }, [openTerminal]);
+
+  const loadRecentSessions = React.useCallback(async (): Promise<readonly ActiveTerminalSession[] | undefined> => {
+    const result = await sessionClient.listTerminalSessions(nextSessionRequestId('recents'));
+    return result.kind === 'success' ? result.sessions : undefined;
+  }, [sessionClient]);
+
+  const terminateRecentSession = React.useCallback(async (sessionId: string): Promise<boolean> => {
+    const result = await sessionClient.stopSession(
+      nextSessionRequestId('terminate'),
+      sessionId,
+      'user_stop',
+    );
+    return result.kind === 'success';
+  }, [sessionClient]);
+
+  const resumeRecentSession = React.useCallback((session: ActiveTerminalSession) => {
+    openTarget({
+      title: sessionTitle(session),
+      eyebrow: 'RECENT SESSION',
+      sessionId: session.sessionId,
+      toolchain: session.toolchain,
+      // "Open again" after the app quits restarts this, not a plain shell.
+      ...(session.command !== undefined ? {command: session.command} : {}),
+    });
+  }, [openTarget]);
+
+  const terminalSessionIdRef = React.useRef(terminalTarget.sessionId);
+  terminalSessionIdRef.current = terminalTarget.sessionId;
+
+  // A tapped session notification opens that session once Horus is unlocked.
+  React.useEffect(() => {
+    if (!authenticated) return undefined;
+    let cancelled = false;
+    const openLaunchSession = async () => {
+      const sessionId = await consumeLaunchSessionId();
+      if (cancelled || sessionId === undefined) return;
+      if (routeRef.current === 'terminal' && terminalSessionIdRef.current === sessionId) return;
+      const sessions = await loadRecentSessions();
+      if (cancelled) return;
+      const session = sessions?.find(candidate => candidate.sessionId === sessionId);
+      if (session !== undefined) resumeRecentSession(session);
+    };
+    void openLaunchSession();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') void openLaunchSession();
+    });
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, [authenticated, loadRecentSessions, resumeRecentSession]);
+
+  const openGithubAccount = React.useCallback(() => {
+    setGithubAccountError(undefined);
+    setRoute('github-account');
+  }, []);
+
+  const openSettings = React.useCallback(() => setRoute('settings'), []);
+
+  const logoutGithubAccount = React.useCallback(() => {
+    if (githubAccount === undefined) {
+      setRoute('home');
+      return;
+    }
+    const marker = `HORUS_GITHUB_LOGOUT_COMPLETE_${nextSessionRequestId('github-logout')}`;
+    setPendingCompletion({kind: 'github-logout', marker});
+    setGithubAccountError(undefined);
+    const command = `gh auth logout --hostname github.com --user ${shellQuote(githubAccount.username)} && ${printHiddenMarker(marker)}`;
+    openTerminal({
+      title: 'GitHub Logout',
+      eyebrow: 'GITHUB / LOGOUT',
+      command: buildZshCommand(command),
+      toolchain: 'github',
+      completionMarker: marker,
+    });
+  }, [githubAccount, openTerminal, setPendingCompletion]);
+
+  const openGithubLoginBrowser = React.useCallback(async (url: string) => {
+    await openGithubDeviceLoginUrl(url);
+  }, []);
+
+  const addProject = React.useCallback((name: string) => {
+    const directory = workspaceProjectDirectory(name);
+    if (directory === undefined || selectedHarness === undefined) return;
+    manualWorkspaceRefreshRef.current += 1;
+    const project = {name, path: directory};
+    setProjects(current => [...current.filter(item => item.path !== directory), project]);
+    openTerminal(harnessSessionTarget(selectedHarness, name, directory));
+  }, [openTerminal, selectedHarness]);
+
+  const beginProjectClone = React.useCallback((source: string, name: string, kind: 'github' | 'url') => {
+    const directory = workspaceProjectDirectory(name);
+    if (directory === undefined || selectedHarness === undefined) return;
+    manualWorkspaceRefreshRef.current += 1;
+    const marker = `HORUS_PROJECT_CLONE_COMPLETE_${nextSessionRequestId('clone')}`;
+    const command = buildProjectCloneCommand(source, directory, marker, kind);
+    setPendingCompletion({kind: 'clone', marker, name, directory, harness: selectedHarness});
+    openTerminal({
+      title: `Clone or reuse ${name}`,
+      eyebrow: 'BARE TERMINAL / CLONE',
+      command: buildZshCommand(command),
+      toolchain: kind === 'github' ? 'github' : 'shell',
+      returnTo: 'projects',
+      completionMarker: marker,
+    }, 'projects');
+  }, [openTerminal, selectedHarness, setPendingCompletion]);
+
+  const cloneProject = React.useCallback((url: string, name: string) => {
+    beginProjectClone(url, name, 'url');
+  }, [beginProjectClone]);
+
+  const refreshGithubRepositories = React.useCallback(async () => {
+    if (projectLoadingRef.current) {
+      queuedGithubRefreshRef.current = true;
+      return;
+    }
+    projectLoadingRef.current = true;
+    setProjectLoading(true);
+    setGithubRepositoriesLoaded(false);
+    setProjectError(undefined);
+    let accountPublished = false;
+    const publishAccount = (account: GithubAccount) => {
+      if (accountPublished) return;
+      accountPublished = true;
+      setGithubAccount(account);
+      setProjectConnected(true);
+      void saveGithubAccount(account);
+    };
+    try {
+      const result = await listGithubRepositories(undefined, publishAccount);
+      if (result.kind === 'success') {
+        setGithubRepositoriesLoaded(true);
+        publishAccount(result.account);
+        setProjects(current => {
+          const localProjects = current.filter(item => item.remote === undefined);
+          return [...localProjects, ...result.repositories];
+        });
+      } else {
+        if (result.account !== undefined) publishAccount(result.account);
+        setProjectError(githubRepositoryError(result.errorCode, result.outputIssue));
+      }
+    } catch {
+      setProjectError('Could not load GitHub repositories. Refresh and try again.');
+    } finally {
+      projectLoadingRef.current = false;
+      setProjectLoading(false);
+      if (queuedGithubRefreshRef.current) {
+        queuedGithubRefreshRef.current = false;
+        if (appMountedRef.current) void refreshGithubRepositoriesRef.current().catch(() => undefined);
+      }
+    }
+  }, []);
+  refreshGithubRepositoriesRef.current = refreshGithubRepositories;
+
+  const refreshManualWorkspaces = React.useCallback(async () => {
+    const refreshId = ++manualWorkspaceRefreshRef.current;
+    const result = await listGuestDirectory('workspace', ['projects']);
+    if (refreshId !== manualWorkspaceRefreshRef.current) return;
+    if (result.kind === 'error') {
+      if (result.errorCode === 'not_found') {
+        setProjects(current => current.filter(project => project.remote !== undefined));
+      }
+      return;
+    }
+    const manualProjects = result.entries
+      .filter(entry => entry.kind === 'directory' && workspaceProjectDirectory(entry.name) !== undefined)
+      .map(entry => ({name: entry.name, path: `${WORKSPACE_PROJECTS_DIRECTORY}/${entry.name}`}));
+    setProjects(current => [
+      ...manualProjects,
+      ...current.filter(project => project.remote !== undefined),
+    ]);
+  }, []);
+
+  React.useEffect(() => {
+    if (autoRefresh === undefined || route !== autoRefresh.route) return;
+    setAutoRefresh(undefined);
+    if (route === 'projects') {
+      void refreshManualWorkspaces().catch(() => undefined).finally(() => {
+        if (autoRefresh.github && routeRef.current === 'projects') refreshGithubRepositories().catch(() => undefined);
+      });
+      return;
+    }
+    void refreshGithubRepositories().catch(() => undefined);
+  }, [autoRefresh, refreshGithubRepositories, refreshManualWorkspaces, route]);
+
+  const openGithubLogin = React.useCallback((returnTo: 'home' | 'projects') => {
+    const marker = `HORUS_GITHUB_LOGIN_COMPLETE_${nextSessionRequestId('github-login')}`;
+    setPendingCompletion({kind: 'github-login', marker, returnTo});
+    const command = `mkdir -p ${shellQuote(WORKSPACE_PROJECTS_DIRECTORY)} && cd ${shellQuote(WORKSPACE_PROJECTS_DIRECTORY)} && ${GITHUB_AUTH_LOGIN_COMMAND} && ${printHiddenMarker(marker)}`;
+    openTarget({title: 'GitHub Login', eyebrow: 'GITHUB / LOGIN', command: buildZshCommand(command), toolchain: 'github', returnTo, completionMarker: marker});
+  }, [openTarget, setPendingCompletion]);
+  const openProjectLogin = React.useCallback(() => openGithubLogin('projects'), [openGithubLogin]);
+  const openHomeGithubLogin = React.useCallback(() => openGithubLogin('home'), [openGithubLogin]);
+
+  const openExistingProject = React.useCallback((project: ProjectSummary) => {
+    if (project.remote !== undefined) {
+      beginProjectClone(project.path, project.name, 'github');
+      return;
+    }
+    const directory = workspaceProjectDirectory(project.name);
+    if (directory === undefined || selectedHarness === undefined) return;
+    openTerminal(harnessSessionTarget(selectedHarness, project.name, directory));
+  }, [beginProjectClone, openTerminal, selectedHarness]);
+
+  const failPendingCompletion = React.useCallback((marker: string) => {
+    const pending = pendingCompletionRef.current;
+    if (pending === undefined || pending.marker !== marker) return;
+    setPendingCompletion(undefined);
+    if (pending.kind === 'github-logout') {
+      setGithubAccountError('GitHub logout failed. The account is still connected.');
+      setRoute('github-account');
+      return;
+    }
+    if (pending.kind === 'github-login') return;
+    setProjectError('Clone did not complete. Review the terminal output before retrying.');
+    // Part of the clone may have landed; show what is on disk now.
+    void refreshManualWorkspaces().catch(() => undefined);
+  }, [refreshManualWorkspaces, setPendingCompletion]);
+
+  const onTerminalCompletion = React.useCallback(() => {
+    const marker = terminalTarget.completionMarker;
+    const pending = pendingCompletionRef.current;
+    if (marker === undefined || pending === undefined || pending.marker !== marker) return;
+    if (pending.kind === 'github-login') {
+      setPendingCompletion(undefined);
+      if (pending.returnTo === 'projects') {
+        setAutoRefresh({route: 'projects', github: true});
+        setRoute('projects');
+        return;
+      }
+      setRoute('home');
+      void refreshGithubRepositories().catch(() => undefined);
+      return;
+    }
+    if (pending.kind === 'github-logout') {
+      // Keep the terminal held until the saved account is cleared; the
+      // rendered state is released together with the route change below.
+      pendingCompletionRef.current = undefined;
+      const release = () => setPendingCompletionState(current => (current?.marker === marker ? undefined : current));
+      clearStoredGithubAccount().then(cleared => {
+        release();
+        if (!cleared) {
+          setGithubAccountError('GitHub logged out, but Horus could not clear its saved account details.');
+          setRoute('github-account');
+          return;
+        }
+        setGithubAccount(undefined);
+        setProjectConnected(false);
+        setGithubRepositoriesLoaded(false);
+        setProjects(current => current.filter(project => project.remote === undefined));
+        setGithubAccountError(undefined);
+        setRoute('home');
+      });
+      return;
+    }
+    manualWorkspaceRefreshRef.current += 1;
+    setProjects(current => [...current.filter(item => item.path !== pending.directory), {name: pending.name, path: pending.directory}]);
+    setPendingCompletion(undefined);
+    openTerminal(harnessSessionTarget(pending.harness, pending.name, pending.directory));
+  }, [openTerminal, refreshGithubRepositories, setPendingCompletion, terminalTarget.completionMarker]);
+
+  const importDownloadedRootfs = React.useCallback(() => {
+    void (async () => {
+      const previousError = bootError;
+      setBootState('installing');
+      const imported = await importRootfs(IMPORT_REQUEST_ID);
+      if (!appMountedRef.current) return;
+      if (imported.kind === 'success') {
+        // Bootstrap re-checks the runtime and finds it ready.
+        setRetryCount(value => value + 1);
+        return;
+      }
+      setBootState('error');
+      setBootError(imported.errorCode === 'import_cancelled' ? previousError : imported.errorCode);
+    })();
+  }, [bootError]);
+
+  const onTerminalCommandFailure = React.useCallback(() => {
+    if (terminalTarget.completionMarker !== undefined) failPendingCompletion(terminalTarget.completionMarker);
+  }, [failPendingCompletion, terminalTarget.completionMarker]);
+
+  if (route === 'boot') {
+    return <LoadingScreen onDebugTerminal={__DEV__ ? openDebugTerminal : undefined} onImport={importDownloadedRootfs} onRetry={() => setRetryCount(value => value + 1)} status={bootState} detail={bootError} />;
+  }
+  if (!__DEV__ && route === 'login' && profile !== null) {
+    return <LoginScreen error={profileError} initialUser={loginUser} notice={lockNotice} onLogin={login} users={profile.users} />;
+  }
+  if ((profile === null && !__DEV__) || (!__DEV__ && route === 'onboarding')) {
+    return <OnboardingScreen actions={onboardingActions} rootfsInstalled={runtimeReady} />;
+  }
+  if (route === 'home') {
+    return (
+      <MetroHomeScreen
+        githubAccount={githubAccount}
+        user={profile?.users.find(candidate => candidate.distro === activeDistro)}
+        onOpenUser={() => {
+          // Finding Account on their own counts as seeing the upgrade card.
+          if (profile?.accountIntro === true) {
+            void dismissAccountIntro();
+            setProfile({users: profile.users});
+          }
+          setRoute('user');
+        }}
+        accountIntro={profile?.accountIntro === true ? {
+          addableDistro: LINUX_DISTROS.find(distro => !profile.users.some(candidate => candidate.distro === distro)),
+          onOpen: () => {
+            void dismissAccountIntro();
+            setProfile({users: profile.users});
+            setRoute('user');
+          },
+          onDismiss: () => {
+            void dismissAccountIntro();
+            setProfile({users: profile.users});
+          },
+        } : undefined}
+        loadRecentSessions={loadRecentSessions}
+        onOpenGithubLogin={openHomeGithubLogin}
+        onOpenGithubAccount={openGithubAccount}
+        onOpenSettings={openSettings}
+        onOpen={openTarget}
+        onResumeSession={resumeRecentSession}
+        onTerminateSession={terminateRecentSession}
+      />
+    );
+  }
+  if (route === 'settings') {
+    return <SessionSettingsScreen onBack={() => setRoute('home')} />;
+  }
+  const signedInUser = profile?.users.find(candidate => candidate.distro === activeDistro);
+  if (route === 'user' && profile !== null && signedInUser !== undefined) {
+    return (
+      <UserAccountScreen
+        onAddUser={() => setRoute('add-user')}
+        onBack={() => setRoute('home')}
+        onLogout={() => logout()}
+        onSwitchTo={next => logout(next)}
+        onUpdateUser={async updated => {
+          const result = await updateUserProfile(updated);
+          if (result.kind === 'success') {
+            setProfile({users: profile.users.map(candidate => candidate.distro === updated.distro ? updated : candidate)});
+          }
+          return result;
+        }}
+        user={signedInUser}
+        users={profile.users}
+      />
+    );
+  }
+  if (route === 'add-user' && profile !== null) {
+    return (
+      <AddUserScreen
+        existingUsers={profile.users}
+        onBack={() => setRoute('user')}
+        onCreated={user => {
+          setProfile({users: [...profile.users, user].sort((a, b) => a.distro.localeCompare(b.distro))});
+          setRoute('user');
+        }}
+      />
+    );
+  }
+  if (route === 'github-account' && githubAccount !== undefined) {
+    return <GithubAccountScreen account={githubAccount} error={githubAccountError} onBack={leaveGithubAccount} onLogout={logoutGithubAccount} />;
+  }
+  if (route === 'projects') {
+    return (
+      <ProjectHubScreen
+        connected={projectConnected}
+        githubRepositoriesLoaded={githubRepositoriesLoaded}
+        loadingRepos={projectLoading}
+        projectError={projectError}
+        onBack={leaveProjects}
+        onCloneRepo={cloneProject}
+        onConfirmConnected={() => { void refreshGithubRepositories(); }}
+        onCreateProject={addProject}
+        onLogin={openProjectLogin}
+        onOpenProject={openExistingProject}
+        onRefreshRepos={() => { void refreshGithubRepositories(); }}
+        projects={projects}
+        toolName={selectedHarness?.title ?? 'Harness'}
+      />
+    );
+  }
+  if (route === 'files') {
+    return <FileExplorerScreen onBack={() => setRoute('home')} />;
+  }
+  const heldCompletion = terminalTarget.completionMarker !== undefined && pendingCompletion?.marker === terminalTarget.completionMarker ? pendingCompletion.kind : undefined;
+  const clonePending = heldCompletion === 'clone';
+  const logoutPending = heldCompletion === 'github-logout';
+  const completionPending = clonePending || logoutPending;
+  return (
+    <TerminalScreen
+      key={terminalInstanceKey}
+      onBack={completionPending ? undefined : leaveTerminal}
+      onGithubDeviceLogin={openGithubLoginBrowser}
+      onHome={completionPending ? undefined : leaveTerminal}
+      onCompletion={onTerminalCompletion}
+      onCommandFailure={onTerminalCommandFailure}
+      screenEyebrow={clonePending ? 'CLONING / WAIT' : logoutPending ? 'GITHUB / LOGOUT / WAIT' : terminalTarget.eyebrow}
+      screenTitle={terminalTarget.title}
+      sessionCommand={terminalTarget.command}
+      existingSessionId={terminalTarget.sessionId}
+      runtimeReady={runtimeReady}
+      stopSessionOnUnmount={terminalTarget.completionMarker !== undefined}
+      toolchain={terminalTarget.toolchain ?? 'shell'}
+      completionMarker={terminalTarget.completionMarker}
+    />
+  );
+}
+
+export default App;

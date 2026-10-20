@@ -1,0 +1,1270 @@
+import React from 'react';
+import {
+  AppState,
+  Keyboard,
+  KeyboardAvoidingView,
+  PermissionsAndroid,
+  Platform,
+  StyleSheet,
+  StatusBar,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import {UI_FONT_FAMILY} from '../ui/typography';
+
+import nativeTerminalRuntime, {type Spec} from '../native/NativeTerminalRuntime';
+import {NativeTerminalInput} from '../native/NativeTerminalInput';
+import {
+  TERMINAL_SESSION_DEFAULT_COLUMNS,
+  TERMINAL_SESSION_DEFAULT_ROWS,
+} from './session/sessionContract';
+import {
+  TerminalSessionClient,
+  type TerminalSessionAttachment,
+  type TerminalSessionExitView,
+} from './session/sessionClient';
+import {TerminalCellBuffer, terminalSize, TERMINAL_BACKGROUND, type TerminalFrame, type TerminalSize} from './terminalBuffer';
+import {TerminalGrid, TERMINAL_CELL_HEIGHT, type NativeScreenState} from './TerminalGrid';
+import {terminalMouseWheelSequence, type TerminalMouseWheel} from './terminalMouse';
+import {
+  installRootfs,
+  readTerminalRuntimeStatus,
+  type TerminalRuntimeStatusView,
+} from './runtimeStatus';
+import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
+import {findGithubDeviceLoginUrl} from '../projects/githubDeviceLogin';
+import type {TrustedSessionOperation, TrustedSessionSnapshot} from './session/sessionContract';
+import {openTrustedTerminalLink} from './terminalLinks';
+import {BrandMark} from './BrandMark';
+import {toolchainInstallLabel} from './toolchainLabels';
+import {nextRequestId} from './terminalRequestId';
+import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
+import {uiColors} from './palette';
+import {InstallProgressOverlay, installStepForStage, lastDownloadProgress, lastInstallStage} from './InstallProgressOverlay';
+import {SessionLimitOverlay} from './SessionLimitOverlay';
+import {readTerminalPaste} from './terminalPaste';
+import {TerminalControls, type TerminalArrow} from './TerminalControls';
+import {AppExitedOverlay, appExitIssueUrl, type AppExit} from './AppExitedOverlay';
+import {InstallFailedOverlay, installFailureIssueUrl} from './InstallFailedOverlay';
+import {classifyInstallFailure, cleanInstallLog, INSTALL_LOG_TAIL_CHARS, type InstallFailure, type InstallFailureKind} from './installFailure';
+import {readDeviceSnapshot} from '../device/deviceSnapshot';
+
+export type TerminalScreenProps = Readonly<{
+  client?: TerminalSessionClient;
+  /**
+   * How long a new session waits for the terminal's first measured size
+   * before starting at the default size. 0 starts at once.
+   */
+  sizeWaitMs?: number;
+  runtime?: TerminalRuntimeBridge | null;
+  onBack?: () => void;
+  onHome?: () => void;
+  onGithubDeviceLogin?: (url: string) => Promise<void>;
+  screenEyebrow?: string;
+  screenTitle?: string;
+  sessionCommand?: string;
+  /** Exact output line that marks a launcher command's successful handoff. */
+  completionMarker?: string;
+  onCompletion?: () => void;
+  /** Called when a completion-marker command exits without its success marker. */
+  onCommandFailure?: () => void;
+  existingSessionId?: string;
+  /** App bootstrap already verified the rootfs and packaged PRoot. */
+  runtimeReady?: boolean;
+  stopSessionOnUnmount?: boolean;
+  toolchain?: TerminalToolchainTarget;
+}>;
+
+type TerminalViewState = 'idle' | 'starting' | 'running' | 'stopped' | 'error';
+
+type TerminalRuntimeBridge = Pick<
+  Spec,
+  'getRuntimeStatus' | 'installRootfs' | 'resetRuntime'
+>;
+
+const TERMINAL_LAYOUT_SETTLE_MS = 120;
+const SESSION_SIZE_WAIT_MS = 1_000;
+
+// Shared across input and output. Output decoding does not use stream mode,
+// so the decoder keeps no state between chunks.
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+type TerminalViewport = Readonly<{width: number; height: number}>;
+
+
+function controlCharacter(character: string): string {
+  if (character === '?') return '\u007f';
+  if (character === ' ' || character === '\t') return character === ' ' ? '\u0000' : '\t';
+  const code = character.codePointAt(0);
+  if (code === undefined || code > 0x7e) return character;
+  if ((code >= 0x40 && code <= 0x5f) || (code >= 0x60 && code <= 0x7e)) {
+    return String.fromCharCode(code & 0x1f);
+  }
+  return character;
+}
+
+function applyTerminalModifiers(value: string, ctrl: boolean, alt: boolean): string {
+  return Array.from(value).map(character => {
+    const modified = ctrl ? controlCharacter(character) : character;
+    return alt && character !== '\t' && character !== '\u001b' ? `\u001b${modified}` : modified;
+  }).join('');
+}
+
+/**
+ * CTRL and ALT are one-shot, like Termux: they modify the next key only. A
+ * latched CTRL turned the next command into control codes, and its ^S froze
+ * the terminal with no visible way out.
+ */
+function applyOneShotModifiers(value: string, ctrl: boolean, alt: boolean): string {
+  if (!ctrl && !alt) return value;
+  const [first = '', ...rest] = Array.from(value);
+  return applyTerminalModifiers(first, ctrl, alt) + rest.join('');
+}
+
+function arrowSequence(direction: TerminalArrow, ctrl: boolean, alt: boolean): string {
+  const modifier = (ctrl ? 4 : 0) + (alt ? 2 : 0);
+  return modifier === 0 ? `\u001b[${direction}` : `\u001b[1;${modifier + 1}${direction}`;
+}
+
+
+function errorLabel(operation: TrustedSessionOperation | {kind: 'error'; errorCode: string} | {kind: 'incomplete'}): string {
+  return operation.kind === 'error' ? operation.errorCode : operation.kind === 'incomplete' ? 'incomplete_stop' : 'unknown_error';
+}
+
+function toolchainInstallError(target: TerminalToolchainTarget): string {
+  if (target === 'github') return 'toolchain_github_install_failed';
+  if (target === 'claude') return 'toolchain_install_failed';
+  if (target === 'codex') return 'toolchain_codex_install_failed';
+  if (target === 'opencode') return 'toolchain_opencode_install_failed';
+  return 'toolchain_install_failed';
+}
+
+/** A start that failed while the service provisioned the app, by its error code. */
+function startInstallFailureKind(errorCode: string): InstallFailureKind | undefined {
+  if (errorCode === 'toolchain_network') return 'network';
+  if (errorCode === 'toolchain_node_version') return 'node_version';
+  if (errorCode === 'toolchain_permissions') return 'permissions';
+  if (errorCode.startsWith('toolchain_')) return 'unknown';
+  return undefined;
+}
+
+/** The exit a session snapshot reports, for a session that ended while detached. */
+function exitFromSnapshot(sessionId: string, snapshot: Extract<TrustedSessionSnapshot, {kind: 'success'}>): TerminalSessionExitView {
+  return {
+    sessionId,
+    reason: snapshot.exitReason ?? 'process_exit',
+    ...(snapshot.exitCode !== undefined ? {exitCode: snapshot.exitCode} : {}),
+    ...(snapshot.signal !== undefined ? {signal: snapshot.signal} : {}),
+  };
+}
+
+function hasToolchainReadyMarker(value: string): boolean {
+  return /(?:^|[\r\n])HORUS_TOOLCHAIN_READY(?:[\r\n]|$)/.test(value);
+}
+
+function hasExactOutputLine(value: string, expected: string): boolean {
+  return value.split(/[\r\n]/).some(line => line === expected);
+}
+
+/**
+ * Returns the kept tail plus `chunk` for scanning, and keeps the last
+ * `tailLength` characters of it so a marker split across chunks still matches.
+ */
+function appendToOutputTail(tailRef: {current: string}, chunk: string, tailLength: number): string {
+  const scanText = `${tailRef.current}${chunk}`;
+  tailRef.current = scanText.slice(-tailLength);
+  return scanText;
+}
+
+function hasVisibleTerminalContent(frame: TerminalFrame): boolean {
+  return frame.lines.some(line => line.text.trim().length > 0);
+}
+
+type TerminalHeaderProps = Readonly<{
+  onBack?: () => void;
+  onHome?: () => void;
+}>;
+
+const TerminalHeader = React.memo(function TerminalHeaderView({onBack, onHome}: TerminalHeaderProps): React.JSX.Element {
+  return (
+    <View pointerEvents="box-none" style={styles.floatingHeader} testID="terminal-floating-header">
+      {(onHome ?? onBack) !== undefined ? (
+        <Pressable accessibilityLabel="Back to home" accessibilityRole="button" onPress={onHome ?? onBack} style={styles.floatingGroup} testID="terminal-home">
+          <BrandMark accessible={false} size={28} />
+          <Text style={styles.menuArrowText}>←</Text>
+        </Pressable>
+      ) : <View style={styles.floatingGroup}><BrandMark accessible={false} size={28} /><Text style={styles.menuArrowText}>←</Text></View>}
+    </View>
+  );
+});
+
+
+export function TerminalScreen({client: providedClient, runtime = undefined, onBack, onGithubDeviceLogin, onHome, sessionCommand, completionMarker, onCompletion, onCommandFailure, existingSessionId, runtimeReady = false, sizeWaitMs = SESSION_SIZE_WAIT_MS, stopSessionOnUnmount = true, toolchain = 'shell'}: TerminalScreenProps): React.JSX.Element {
+  const [viewport, setViewport] = React.useState({width: 0, height: 0});
+  const viewportRef = React.useRef(viewport);
+  const pendingViewportRef = React.useRef<TerminalViewport | undefined>(undefined);
+  const viewportTimerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [cellWidth, setCellWidth] = React.useState(8);
+  const [cellWidthMeasured, setCellWidthMeasured] = React.useState(false);
+  const measureCellWidth = React.useCallback((width: number) => {
+    setCellWidth(width);
+    setCellWidthMeasured(true);
+  }, []);
+  // A new session starts at the measured size: an app like Claude Code draws
+  // its header the moment it launches, and a later resize cannot redraw
+  // lines that have already scrolled up. Starting waits for the terminal's
+  // first layout, or a short timeout if it never comes.
+  const sizeMeasuredRef = React.useRef(false);
+  const sizeWaitersRef = React.useRef(new Set<() => void>());
+  const waitForMeasuredSize = React.useCallback(() => new Promise<void>(resolve => {
+    if (sizeMeasuredRef.current || sizeWaitMs <= 0) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      clearTimeout(timer);
+      sizeWaitersRef.current.delete(done);
+      resolve();
+    };
+    const timer = setTimeout(done, sizeWaitMs);
+    sizeWaitersRef.current.add(done);
+  }), [sizeWaitMs]);
+  const [keyboardVisible, setKeyboardVisible] = React.useState(Keyboard.isVisible());
+  const keyboardVisibleRef = React.useRef(keyboardVisible);
+  const lastExpandedViewportRef = React.useRef<TerminalViewport | undefined>(undefined);
+  const [transcriptPagerOpen, setTranscriptPagerOpen] = React.useState(false);
+  const size = terminalSize(
+    viewport.height > 0 ? viewport.height / TERMINAL_CELL_HEIGHT : TERMINAL_SESSION_DEFAULT_ROWS,
+    viewport.width > 0 ? viewport.width / cellWidth : TERMINAL_SESSION_DEFAULT_COLUMNS,
+  );
+  const sizeRef = React.useRef(size);
+  sizeRef.current = size;
+  const sizeMeasured = viewport.width > 0 && viewport.height > 0 && cellWidthMeasured;
+  React.useEffect(() => {
+    // Runs after the render that put the measured size in sizeRef.
+    if (!sizeMeasured) return;
+    sizeMeasuredRef.current = true;
+    for (const done of [...sizeWaitersRef.current]) done();
+  }, [sizeMeasured]);
+  const requestedSizeRef = React.useRef<TerminalSize | undefined>(undefined);
+  const client = React.useMemo(
+    () => providedClient ?? new TerminalSessionClient(),
+    [providedClient],
+  );
+  const [state, setState] = React.useState<TerminalViewState>('idle');
+  const [frame, setFrame] = React.useState<TerminalFrame | undefined>(undefined);
+  const [nativeSessionId, setNativeSessionId] = React.useState<string | undefined>(undefined);
+  const [terminalInputSessionId, setTerminalInputSessionId] = React.useState<string | undefined>(undefined);
+  const [nativeHarnessReady, setNativeHarnessReady] = React.useState(false);
+  const [keyboardShowRequest, setKeyboardShowRequest] = React.useState(0);
+  const [keyboardHideRequest, setKeyboardHideRequest] = React.useState(0);
+  const [keyboardLineResetRequest, setKeyboardLineResetRequest] = React.useState(0);
+  const [harnessFrameReady, setHarnessFrameReady] = React.useState(false);
+  // Last HORUS_INSTALL_STAGE seen while first-run provisioning runs; undefined
+  // when the app was already installed.
+  const [installStage, setInstallStage] = React.useState<string | undefined>(undefined);
+  const installStageRef = React.useRef<string | undefined>(undefined);
+  const [installDownload, setInstallDownload] = React.useState<string | undefined>(undefined);
+  // Set when an app quits on its own, to show why and offer a restart.
+  const [appExit, setAppExit] = React.useState<AppExit | undefined>(undefined);
+  // Set when a first-run install fails, to explain why and offer a retry.
+  const [installFailure, setInstallFailure] = React.useState<InstallFailure | undefined>(undefined);
+  // The end of the install output, kept for the failure screen: a native
+  // session's own copy goes away with the session.
+  const installLogRef = React.useRef('');
+  const [installLogVisible, setInstallLogVisible] = React.useState(false);
+  const [nativeScreen, setNativeScreen] = React.useState<NativeScreenState>({hasContent: false, alternate: false});
+  const displayBufferRef = React.useRef<TerminalCellBuffer | undefined>(undefined);
+  const [error, setError] = React.useState<string | undefined>(undefined);
+  const sessionLimitReached = error === 'session_limit_reached';
+  const [outputHistoryGap, setOutputHistoryGap] = React.useState(false);
+  const [ctrlActive, setCtrlActive] = React.useState(false);
+  const [altActive, setAltActive] = React.useState(false);
+  const activeSessionRef = React.useRef<string | undefined>(undefined);
+  const attachmentRef = React.useRef<TerminalSessionAttachment | undefined>(undefined);
+  const lastOutputSeqRef = React.useRef(0);
+  const isAttachedRef = React.useRef(false);
+  const appStateRef = React.useRef(AppState.currentState);
+  const terminalInputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
+  const nativeTerminalInputRef = React.useRef<React.ElementRef<typeof NativeTerminalInput>>(null);
+  const mountedRef = React.useRef(true);
+  const startingRef = React.useRef(false);
+  const inputLayoutReadyRef = React.useRef(false);
+  const keyboardInputValueRef = React.useRef('');
+  const keyboardFocusFrameRef = React.useRef<number | null>(null);
+  const githubLoginOutputTailRef = React.useRef('');
+  const openedGithubLoginUrlsRef = React.useRef<Set<string>>(new Set());
+  const installOutputTailRef = React.useRef('');
+  const installReadyRef = React.useRef(false);
+  // Whether HORUS_TOOLCHAIN_READY was actually seen. installReadyRef is also
+  // assumed true for a resumed session; this one drives the install screen,
+  // so a session left mid-install still shows its progress on return.
+  const readyMarkerSeenRef = React.useRef(false);
+  const completionOutputTailRef = React.useRef('');
+  const completionMarkerSeenRef = React.useRef(false);
+  const completionDeliveredRef = React.useRef(false);
+  // Interactive sessions parse and draw natively. One-off shell commands that
+  // wait for a completion marker, and the GitHub login flow, keep the JS path
+  // because they scan output in JS.
+  const nativeHarness = Platform.OS === 'android' && !Platform.isTesting &&
+    (toolchain === 'claude' || toolchain === 'codex' || toolchain === 'opencode' ||
+      (toolchain === 'shell' && completionMarker === undefined));
+  const nativeTerminalInput = Platform.OS === 'android' && !Platform.isTesting;
+  const nativeOpenCode = nativeHarness && toolchain === 'opencode';
+
+  viewportRef.current = viewport;
+
+  const commitViewport = React.useCallback((nextViewport: TerminalViewport) => {
+    const expanded = lastExpandedViewportRef.current;
+    // Keep the largest hidden-keyboard viewport. Android can dispatch the
+    // shrinking layout before keyboardDidShow, so a low intermediate height
+    // must not replace the geometry we need to restore on keyboardDidHide.
+    if (!keyboardVisibleRef.current &&
+      (expanded === undefined || nextViewport.height >= expanded.height || nextViewport.width !== expanded.width)) {
+      lastExpandedViewportRef.current = nextViewport;
+    }
+    const previous = viewportRef.current;
+    if (previous.width === nextViewport.width && previous.height === nextViewport.height) return;
+    viewportRef.current = nextViewport;
+    setViewport(nextViewport);
+  }, []);
+
+  const scheduleViewportCommit = React.useCallback((nextViewport: TerminalViewport) => {
+    pendingViewportRef.current = nextViewport;
+    if (viewportRef.current.width === 0 || viewportRef.current.height === 0) {
+      pendingViewportRef.current = undefined;
+      commitViewport(nextViewport);
+      return;
+    }
+    if (viewportTimerRef.current !== undefined) clearTimeout(viewportTimerRef.current);
+    viewportTimerRef.current = setTimeout(() => {
+      viewportTimerRef.current = undefined;
+      const pending = pendingViewportRef.current;
+      pendingViewportRef.current = undefined;
+      if (pending !== undefined) commitViewport(pending);
+    }, TERMINAL_LAYOUT_SETTLE_MS);
+  }, [commitViewport]);
+
+  const handleOutputLayout = React.useCallback((event: {nativeEvent: {layout: {width: number; height: number}}}) => {
+    const {width, height} = event.nativeEvent.layout;
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+    scheduleViewportCommit({width, height});
+  }, [scheduleViewportCommit]);
+
+  const deliverCompletion = React.useCallback(() => {
+    if (!completionMarkerSeenRef.current || completionDeliveredRef.current) return;
+    completionDeliveredRef.current = true;
+    onCompletion?.();
+  }, [onCompletion]);
+
+  const deliverCommandFailure = React.useCallback(() => {
+    if (completionMarker === undefined || completionMarkerSeenRef.current || completionDeliveredRef.current) return;
+    completionDeliveredRef.current = true;
+    onCommandFailure?.();
+  }, [completionMarker, onCommandFailure]);
+
+  /**
+   * Covers the terminal with why the install failed. Helper commands (clone,
+   * login) report through onCommandFailure instead. Android's own view of the
+   * network settles "offline" without guessing from the log.
+   */
+  const showInstallFailure = React.useCallback((kind?: InstallFailureKind) => {
+    if (completionMarker !== undefined) return;
+    const rawLog = installLogRef.current;
+    const stage = installStageRef.current;
+    const log = cleanInstallLog(rawLog);
+    setInstallFailure({kind: kind ?? classifyInstallFailure(rawLog, stage, undefined), ...(stage === undefined ? {} : {stage}), ...(log === undefined ? {} : {log})});
+    void readDeviceSnapshot().then(snapshot => {
+      if (!mountedRef.current || snapshot?.online !== false) return;
+      setInstallFailure(current => current === undefined ? current : {...current, kind: 'offline'});
+    });
+  }, [completionMarker]);
+
+  const disposeAttachment = React.useCallback(() => {
+    isAttachedRef.current = false;
+    client.dispose();
+  }, [client]);
+
+  /** Forgets the session after a normal exit and reports how it ended. */
+  const handleSessionExited = React.useCallback((signal: string | undefined) => {
+    isAttachedRef.current = false;
+    activeSessionRef.current = undefined;
+    attachmentRef.current = undefined;
+    setState('stopped');
+    setError(signal === undefined ? undefined : `exited:${signal}`);
+    deliverCompletion();
+    deliverCommandFailure();
+  }, [deliverCommandFailure, deliverCompletion]);
+
+  /**
+   * Ends the screen's session, whether the end arrived live or was found on
+   * reattaching (after the app was in the background, or on resume): a failed
+   * install gets the failure screen either way.
+   */
+  const finishSession = React.useCallback((exit: TerminalSessionExitView) => {
+    // The end may arrive twice: live, and again from the replay on reattaching.
+    if (activeSessionRef.current !== exit.sessionId) return;
+    client.dispose();
+    isAttachedRef.current = false;
+    attachmentRef.current = undefined;
+    setNativeSessionId(undefined);
+    setTerminalInputSessionId(undefined);
+    setNativeHarnessReady(false);
+    if (!mountedRef.current) return;
+    // A resumed session is assumed installed, so its failed stage counts too.
+    if (!installReadyRef.current || installStageRef.current?.endsWith('_failed') === true) {
+      activeSessionRef.current = undefined;
+      setState('error');
+      setError(toolchainInstallError(toolchain));
+      showInstallFailure();
+      deliverCommandFailure();
+      return;
+    }
+    // One-off shell commands (clones) report through their completion
+    // marker; an interactive shell gets the exit screen like an app, or
+    // `exit` would leave the install placeholder behind.
+    if ((toolchain !== 'shell' || completionMarker === undefined) && exit.reason === 'process_exit') {
+      // Read the last screen before the buffer is reused; a native
+      // session's lives in the native engine until taken once.
+      const localScreen = nativeHarness ? undefined : displayBufferRef.current?.snapshot().lines
+        // A wrapped row continues the one above (soft wrap), not a new line.
+        .map((line, index) => (index > 0 && line.wrapped ? '' : '\n') + line.text)
+        .join('').split('\n').map(line => line.trimEnd()).join('\n').trim();
+      const exitInfo: AppExit = {
+        ...(exit.exitCode !== undefined ? {exitCode: exit.exitCode} : {}),
+        ...(exit.signal !== undefined ? {signal: exit.signal} : {}),
+      };
+      const screen = nativeHarness && nativeTerminalRuntime !== null
+        ? nativeTerminalRuntime.takeExitScreen(exit.sessionId).catch(() => null)
+        : Promise.resolve(localScreen);
+      void screen.then(output => {
+        if (!mountedRef.current) return;
+        Keyboard.dismiss();
+        setAppExit(output ? {...exitInfo, output} : exitInfo);
+      });
+    }
+    handleSessionExited(exit.signal);
+  }, [client, completionMarker, deliverCommandFailure, handleSessionExited, nativeHarness, showInstallFailure, toolchain]);
+
+  const openTerminalLink = React.useCallback((url: string) => {
+    void openTrustedTerminalLink(url).catch(() => {
+      if (mountedRef.current) setError('link_unavailable');
+    });
+  }, []);
+
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (keyboardFocusFrameRef.current !== null) {
+        cancelAnimationFrame(keyboardFocusFrameRef.current);
+        keyboardFocusFrameRef.current = null;
+      }
+      if (viewportTimerRef.current !== undefined) {
+        clearTimeout(viewportTimerRef.current);
+        viewportTimerRef.current = undefined;
+      }
+      pendingViewportRef.current = undefined;
+      displayBufferRef.current?.dispose();
+      displayBufferRef.current = undefined;
+      setNativeSessionId(undefined);
+      setTerminalInputSessionId(undefined);
+      setNativeHarnessReady(false);
+      disposeAttachment();
+      const activeSession = activeSessionRef.current;
+      activeSessionRef.current = undefined;
+      attachmentRef.current = undefined;
+      lastOutputSeqRef.current = 0;
+      if (activeSession !== undefined && stopSessionOnUnmount) {
+        void client.stopSession(nextRequestId('unmount'), activeSession, 'screen_unmount');
+      }
+      client.dispose();
+    };
+  }, [client, disposeAttachment, stopSessionOnUnmount]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'android' || Number(Platform.Version) < 33) return;
+    void PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS).catch(() => undefined);
+  }, []);
+
+  React.useEffect(() => {
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () => {
+      keyboardVisibleRef.current = true;
+      setKeyboardVisible(true);
+    });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      keyboardVisibleRef.current = false;
+      setKeyboardVisible(false);
+      const expanded = lastExpandedViewportRef.current;
+      if (expanded !== undefined) scheduleViewportCommit(expanded);
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [scheduleViewportCommit]);
+
+  React.useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
+      const sessionId = activeSessionRef.current;
+      if (nextState === 'background' || nextState === 'inactive') {
+        if (sessionId !== undefined && isAttachedRef.current) disposeAttachment();
+        return;
+      }
+      if (previousState === 'active' || sessionId === undefined || isAttachedRef.current) return;
+      const attachment = attachmentRef.current;
+      if (attachment === undefined) return;
+      isAttachedRef.current = true;
+      void client.attachAndSubscribe(
+        nextRequestId('foreground-subscribe'),
+        sessionId,
+        attachment,
+        lastOutputSeqRef.current,
+      ).then(outcome => {
+        if (
+          !mountedRef.current ||
+          activeSessionRef.current !== sessionId ||
+          !isAttachedRef.current ||
+          appStateRef.current !== 'active'
+        ) return;
+        if (outcome.kind !== 'success') {
+          isAttachedRef.current = false;
+          setError(errorLabel(outcome));
+          return;
+        }
+        if (outcome.sessionState === 'exited') {
+          // The exit happened while backgrounded, so onExit never ran.
+          finishSession(exitFromSnapshot(sessionId, outcome));
+          return;
+        }
+        setError(undefined);
+        setState('running');
+      }).catch(() => {
+        if (mountedRef.current && activeSessionRef.current === sessionId) {
+          isAttachedRef.current = false;
+          setError('subscription_failed');
+        }
+      });
+    });
+    return () => subscription.remove();
+  }, [client, disposeAttachment, finishSession]);
+
+  const readRuntimeStatus = React.useCallback(async (): Promise<TerminalRuntimeStatusView> => {
+    if (runtime === undefined) return readTerminalRuntimeStatus();
+    return readTerminalRuntimeStatus(runtime as Spec);
+  }, [runtime]);
+
+  const setRuntimeFailure = React.useCallback((errorCode: string) => {
+    if (!mountedRef.current) return;
+    setError(errorCode);
+    setState('error');
+  }, []);
+
+  const startPtySession = React.useCallback(async (sessionToResume?: string) => {
+    let sessionId: string;
+    // A resumed session, or one the service handed back because it was
+    // already running: its install finished long ago, and it stays the
+    // user's if this screen fails to attach.
+    let resumed = sessionToResume !== undefined;
+    if (sessionToResume !== undefined) {
+      // The running session's terminal size is not known here: it may have
+      // been sized with the keyboard hidden, or by another screen. Leave it
+      // unknown so the first measured size resizes the session and its
+      // native parser together, and the app redraws at the size shown.
+      await waitForMeasuredSize();
+      if (!mountedRef.current) return;
+      sessionId = sessionToResume;
+      requestedSizeRef.current = nativeHarness ? undefined : sizeRef.current;
+    } else {
+      await waitForMeasuredSize();
+      if (!mountedRef.current) return;
+      const started = await client.startSession(nextRequestId('start'), {
+        ...sizeRef.current,
+        command: sessionCommand,
+        toolchain,
+        // Clone, login, and logout terminals are short helper commands that
+        // end on their own; they must not take the slot of the app they open.
+        ...(completionMarker === undefined ? {} : {countsAgainstSessionLimit: false}),
+      });
+      if (!mountedRef.current) {
+        // App and shell sessions outlive their screen, and the service hands
+        // the same running session to the next screen that starts this
+        // command. Stopping it here would kill the remounted screen's session.
+        if (started.kind === 'success' && stopSessionOnUnmount && !started.reattached) {
+          await client.stopSession(nextRequestId('late-stop'), started.sessionId, 'screen_unmount');
+        }
+        return;
+      }
+      if (started.kind !== 'success') {
+        setState('error');
+        setError(started.errorCode);
+        const failureKind = toolchain === 'shell' ? undefined : startInstallFailureKind(started.errorCode);
+        if (failureKind !== undefined) showInstallFailure(failureKind);
+        deliverCommandFailure();
+        return;
+      }
+      sessionId = started.sessionId;
+      requestedSizeRef.current = {rows: started.rows, columns: started.columns};
+      if (started.reattached) {
+        resumed = true;
+        installReadyRef.current = true;
+      }
+    }
+    if (!mountedRef.current) return;
+    lastOutputSeqRef.current = 0;
+    activeSessionRef.current = sessionId;
+    setTerminalInputSessionId(nativeTerminalInput ? sessionId : undefined);
+    setNativeSessionId(nativeHarness ? sessionId : undefined);
+    setNativeHarnessReady(nativeHarness && resumed);
+    displayBufferRef.current = nativeHarness ? undefined : new TerminalCellBuffer(requestedSizeRef.current ?? sizeRef.current, {
+      onChange: nextFrame => {
+        if (!mountedRef.current) return;
+        if (toolchain !== 'shell' && installReadyRef.current && nextFrame.alternate && hasVisibleTerminalContent(nextFrame)) {
+          setHarnessFrameReady(true);
+        }
+        setFrame(nextFrame);
+      },
+      onReply: async data => {
+        if (!mountedRef.current || activeSessionRef.current !== sessionId) return;
+        const outcome = await client.writeSessionInput(
+          nextRequestId('terminal-reply'), sessionId, textEncoder.encode(data),
+        );
+        if (outcome.kind === 'error') throw new Error('terminal_reply_failed');
+      },
+      onError: code => {
+        if (!mountedRef.current) return;
+        setState('error');
+        setError(code);
+        disposeAttachment();
+        const activeSession = activeSessionRef.current;
+        activeSessionRef.current = undefined;
+        if (activeSession !== undefined && !resumed) {
+          void client.stopSession(nextRequestId('renderer-stop'), activeSession, 'screen_unmount');
+        }
+      },
+    });
+    if (resumed && displayBufferRef.current !== undefined) setFrame(displayBufferRef.current.snapshot());
+    const attachment: TerminalSessionAttachment = {
+      onOutput: chunk => {
+        if (!mountedRef.current) return;
+        lastOutputSeqRef.current = Math.max(lastOutputSeqRef.current, chunk.seq);
+        const scanInstallMarker = !readyMarkerSeenRef.current;
+        const scanGithubLogin = toolchain === 'github' && onGithubDeviceLogin !== undefined;
+        const scanCompletionMarker = completionMarker !== undefined && !completionMarkerSeenRef.current;
+        if (scanInstallMarker || scanGithubLogin || scanCompletionMarker) {
+          const outputText = textDecoder.decode(chunk.bytes);
+          if (scanInstallMarker) {
+            installLogRef.current = `${installLogRef.current}${outputText}`.slice(-INSTALL_LOG_TAIL_CHARS);
+            const stage = lastInstallStage(outputText);
+            if (stage !== undefined && stage !== installStageRef.current) {
+              installStageRef.current = stage;
+              setInstallStage(stage);
+              setInstallDownload(undefined);
+            }
+            const download = lastDownloadProgress(outputText);
+            if (download !== undefined) setInstallDownload(download);
+            if (hasToolchainReadyMarker(appendToOutputTail(installOutputTailRef, outputText, 512))) {
+              readyMarkerSeenRef.current = true;
+              installReadyRef.current = true;
+              if (nativeHarness) setNativeHarnessReady(true);
+            }
+          }
+          if (scanGithubLogin) {
+            const githubLoginUrl = findGithubDeviceLoginUrl(appendToOutputTail(githubLoginOutputTailRef, outputText, 512));
+            if (
+              githubLoginUrl !== undefined &&
+              !openedGithubLoginUrlsRef.current.has(githubLoginUrl)
+            ) {
+              openedGithubLoginUrlsRef.current.add(githubLoginUrl);
+              void (async () => {
+                await onGithubDeviceLogin(githubLoginUrl);
+                if (!mountedRef.current || activeSessionRef.current !== sessionId) return;
+                const confirmed = await client.writeSessionInput(
+                  nextRequestId('github-browser-confirm'),
+                  sessionId,
+                  textEncoder.encode('\r'),
+                );
+                if (confirmed.kind === 'error') throw new Error('github_browser_confirm_failed');
+              })().catch(() => {
+                if (mountedRef.current && activeSessionRef.current === sessionId) setError('github_browser_unavailable');
+              });
+            }
+          }
+          if (scanCompletionMarker) {
+            const scanText = appendToOutputTail(completionOutputTailRef, outputText, completionMarker.length + 2);
+            if (hasExactOutputLine(scanText, completionMarker)) completionMarkerSeenRef.current = true;
+          }
+        }
+        displayBufferRef.current?.append(chunk.bytes);
+      },
+      onExit: finishSession,
+      onProtocolError: protocolError => {
+        if (!mountedRef.current) return;
+        if (protocolError.kind === 'output_gap' || protocolError.kind === 'sequence_gap') {
+          // Native sessions stop sending output to JS once ready, so this
+          // cursor is stale for them; the native engine detects real gaps and
+          // makes the app repaint instead.
+          if (!nativeHarness) setOutputHistoryGap(true);
+          return;
+        }
+        setState('error');
+        setError(`${protocolError.kind}:${protocolError.detail}`.slice(0, 160));
+      },
+    };
+    attachmentRef.current = attachment;
+    isAttachedRef.current = true;
+    try {
+      const subscription = await client.attachAndSubscribe(
+        nextRequestId('subscribe'),
+        sessionId,
+        attachment,
+      );
+      if (subscription.kind !== 'success') {
+        disposeAttachment();
+        if (!resumed) {
+          await client.stopSession(nextRequestId('subscribe-failed-stop'), sessionId, 'screen_unmount');
+        }
+        activeSessionRef.current = undefined;
+        setState('error');
+        setError(errorLabel(subscription));
+        deliverCommandFailure();
+        return;
+      }
+      if (subscription.sessionState === 'exited') {
+        finishSession(exitFromSnapshot(sessionId, subscription));
+        return;
+      }
+      if (mountedRef.current && activeSessionRef.current === sessionId) {
+        setState('running');
+        if (appStateRef.current === 'background' || appStateRef.current === 'inactive') {
+          disposeAttachment();
+        }
+      }
+    } catch {
+      disposeAttachment();
+      if (!resumed) {
+        await client.stopSession(nextRequestId('subscribe-error-stop'), sessionId, 'screen_unmount');
+      }
+      activeSessionRef.current = undefined;
+      attachmentRef.current = undefined;
+      setState('error');
+      setError('subscription_failed');
+      deliverCommandFailure();
+    }
+  }, [client, completionMarker, deliverCommandFailure, disposeAttachment, finishSession, nativeHarness, nativeTerminalInput, onGithubDeviceLogin, sessionCommand, showInstallFailure, stopSessionOnUnmount, toolchain, waitForMeasuredSize]);
+
+  /** Starts (or resumes) the session; [fresh] ignores the one to resume. */
+  const start = React.useCallback(async (fresh = false) => {
+    if (activeSessionRef.current !== undefined || startingRef.current) return;
+    startingRef.current = true;
+    setState('starting');
+    setError(undefined);
+    setAppExit(undefined);
+    setInstallFailure(undefined);
+    installLogRef.current = '';
+    setOutputHistoryGap(false);
+    githubLoginOutputTailRef.current = '';
+    openedGithubLoginUrlsRef.current.clear();
+    installOutputTailRef.current = '';
+    completionOutputTailRef.current = '';
+    completionMarkerSeenRef.current = false;
+    completionDeliveredRef.current = false;
+    installReadyRef.current = false;
+    readyMarkerSeenRef.current = false;
+    setHarnessFrameReady(false);
+    installStageRef.current = undefined;
+    setInstallStage(undefined);
+    setInstallDownload(undefined);
+    setInstallLogVisible(false);
+    setNativeScreen({hasContent: false, alternate: false});
+    displayBufferRef.current?.dispose();
+    displayBufferRef.current = undefined;
+    setNativeSessionId(undefined);
+    setTerminalInputSessionId(undefined);
+    setNativeHarnessReady(false);
+    setFrame(undefined);
+    try {
+      if (existingSessionId !== undefined && !fresh) {
+        installReadyRef.current = true;
+        await startPtySession(existingSessionId);
+        return;
+      }
+      if (runtimeReady) {
+        await startPtySession();
+        return;
+      }
+      const status = await readRuntimeStatus();
+      if (!mountedRef.current) return;
+      if (status.kind === 'error') {
+        setRuntimeFailure(status.errorCode);
+        return;
+      }
+      if (status.runtimeState === 'not_installed') {
+        const installed = runtime === undefined
+          ? await installRootfs(nextRequestId('install'))
+          : await installRootfs(nextRequestId('install'), runtime);
+        if (!mountedRef.current) return;
+        if (installed.kind !== 'success') {
+          setRuntimeFailure(installed.errorCode);
+          return;
+        }
+        const verified = await readRuntimeStatus();
+        if (!mountedRef.current) return;
+        if (verified.kind === 'error') {
+          setRuntimeFailure(verified.errorCode);
+          return;
+        }
+        if (verified.runtimeState !== 'ready') {
+          setRuntimeFailure('runtime_not_ready');
+          return;
+        }
+        if (!verified.prootAvailable) {
+          setRuntimeFailure('proot_unavailable');
+          return;
+        }
+      } else if (!status.prootAvailable) {
+        setRuntimeFailure('proot_unavailable');
+        return;
+      }
+      await startPtySession();
+    } finally {
+      startingRef.current = false;
+    }
+  }, [existingSessionId, readRuntimeStatus, runtime, runtimeReady, setRuntimeFailure, startPtySession]);
+
+  React.useEffect(() => {
+    void start();
+  }, [start]);
+
+  React.useEffect(() => {
+    if (state !== 'running' || !inputLayoutReadyRef.current) return;
+    if (nativeTerminalInput) nativeTerminalInputRef.current?.focus();
+    else terminalInputRef.current?.focus();
+  }, [nativeTerminalInput, state]);
+
+  const write = React.useCallback(async (text: string) => {
+    const activeSession = activeSessionRef.current;
+    if (activeSession === undefined || text.length === 0) return;
+    const bytes = textEncoder.encode(text);
+    const outcome = await client.writeSessionInput(nextRequestId('input'), activeSession, bytes);
+    if (outcome.kind === 'error' && mountedRef.current) {
+      setState('error');
+      setError(outcome.errorCode);
+    }
+  }, [client]);
+
+  const releaseModifiers = React.useCallback(() => {
+    setCtrlActive(false);
+    setAltActive(false);
+  }, []);
+
+  // The keyboard editor mirrors the line typed so far. Keys sent from the
+  // controls (Tab, arrows, paste) change the shell line behind its back, so
+  // it starts over; otherwise a later correction would erase the wrong text.
+  const clearKeyboardInput = React.useCallback(() => {
+    keyboardInputValueRef.current = '';
+    terminalInputRef.current?.clear();
+    setKeyboardLineResetRequest(value => value >= Number.MAX_SAFE_INTEGER ? 1 : value + 1);
+  }, []);
+
+  const handleTerminalText = React.useCallback((text: string) => {
+    const previous = keyboardInputValueRef.current;
+    if (text === previous) return;
+    keyboardInputValueRef.current = text;
+    // Use committed text for typing/paste/hardware input. Android onKeyPress
+    // is an IME heuristic and can omit characters from a batched commit.
+    const before = Array.from(previous);
+    const after = Array.from(text);
+    let common = 0;
+    while (common < before.length && common < after.length && before[common] === after[common]) common += 1;
+    const typed = after.slice(common).join('');
+    void write('\u007f'.repeat(before.length - common) + applyOneShotModifiers(typed, ctrlActive, altActive));
+    if (typed.length > 0) releaseModifiers();
+  }, [altActive, ctrlActive, releaseModifiers, write]);
+
+  const handleTerminalKeyPress = React.useCallback((event: {nativeEvent: {key: string}}) => {
+    // RN emits soft-key Backspace before the corresponding text change.
+    // Only an already empty input needs this fallback (there is no change).
+    if (event.nativeEvent.key === 'Backspace' && keyboardInputValueRef.current.length === 0) {
+      void write('\u007f');
+    }
+  }, [write]);
+
+  const running = state === 'running';
+  const focusTerminalInput = React.useCallback(() => {
+    if (!running) return;
+    const input = nativeTerminalInput ? nativeTerminalInputRef.current : terminalInputRef.current;
+    if (input === null) return;
+    if (nativeTerminalInput) {
+      input.focus();
+      if (!keyboardVisible) {
+        setKeyboardShowRequest(value => value >= Number.MAX_SAFE_INTEGER ? 1 : value + 1);
+      }
+      return;
+    }
+    if (Keyboard.isVisible()) {
+      input.focus();
+      return;
+    }
+    // Android can leave the editor focused after Back hides the IME. A plain
+    // focus() is then a no-op, so reset focus and request it on the next frame.
+    input.blur();
+    if (keyboardFocusFrameRef.current !== null) cancelAnimationFrame(keyboardFocusFrameRef.current);
+    keyboardFocusFrameRef.current = requestAnimationFrame(() => {
+      keyboardFocusFrameRef.current = null;
+      if (mountedRef.current && activeSessionRef.current !== undefined) {
+        if (nativeTerminalInput) nativeTerminalInputRef.current?.focus();
+        else terminalInputRef.current?.focus();
+      }
+    });
+  }, [keyboardVisible, nativeTerminalInput, running]);
+
+  const sendTerminalKey = React.useCallback((value: string, applyModifiers = true) => {
+    clearKeyboardInput();
+    void write(applyModifiers ? applyOneShotModifiers(value, ctrlActive, altActive) : value);
+    releaseModifiers();
+  }, [altActive, clearKeyboardInput, ctrlActive, releaseModifiers, write]);
+
+  const sendEscape = React.useCallback(() => {
+    if (toolchain === 'codex' && transcriptPagerOpen) {
+      clearKeyboardInput();
+      setTranscriptPagerOpen(false);
+      void write('\u001b');
+      return;
+    }
+    sendTerminalKey('\u001b');
+  }, [clearKeyboardInput, sendTerminalKey, toolchain, transcriptPagerOpen, write]);
+
+  const sendArrow = React.useCallback((direction: TerminalArrow) => {
+    clearKeyboardInput();
+    void write(arrowSequence(direction, ctrlActive, altActive));
+    releaseModifiers();
+  }, [altActive, clearKeyboardInput, ctrlActive, releaseModifiers, write]);
+
+  const pasteClipboard = React.useCallback(() => {
+    clearKeyboardInput();
+    void (async () => {
+      const sequence = await readTerminalPaste(nativeSessionId, displayBufferRef.current?.bracketedPaste ?? false);
+      if (sequence !== undefined && mountedRef.current) await write(sequence);
+    })();
+  }, [clearKeyboardInput, nativeSessionId, write]);
+
+  const restartApp = React.useCallback(() => {
+    void start(true);
+  }, [start]);
+
+  const reportAppExit = React.useCallback(() => {
+    if (appExit === undefined) return;
+    void (async () => {
+      const status = await readRuntimeStatus().catch(() => undefined);
+      const url = appExitIssueUrl(toolchain, appExit, {
+        ...(status !== undefined && status.kind !== 'error' ? {appVersion: status.appVersion} : {}),
+        androidVersion: String(Platform.Version),
+      });
+      await openTrustedTerminalLink(url).catch(() => {
+        if (mountedRef.current) setError('link_unavailable');
+      });
+    })();
+  }, [appExit, readRuntimeStatus, toolchain]);
+
+  const reportInstallFailure = React.useCallback(() => {
+    if (installFailure === undefined) return;
+    void (async () => {
+      const status = await readRuntimeStatus().catch(() => undefined);
+      const url = installFailureIssueUrl(toolchain, installFailure, {
+        ...(status !== undefined && status.kind !== 'error' ? {appVersion: status.appVersion} : {}),
+        androidVersion: String(Platform.Version),
+      });
+      await openTrustedTerminalLink(url).catch(() => {
+        if (mountedRef.current) setError('link_unavailable');
+      });
+    })();
+  }, [installFailure, readRuntimeStatus, toolchain]);
+
+  const sendPageKey = React.useCallback((direction: 'up' | 'down') => {
+    const sequence = direction === 'up' ? '\u001b[5~' : '\u001b[6~';
+    if (toolchain === 'codex' && direction === 'up' && !transcriptPagerOpen) {
+      setTranscriptPagerOpen(true);
+      void (async () => {
+        await write('\u0014');
+        await write(sequence);
+      })();
+      return;
+    }
+    void write(sequence);
+  }, [toolchain, transcriptPagerOpen, write]);
+
+  const toggleCodexTranscriptPager = React.useCallback(() => {
+    setTranscriptPagerOpen(open => !open);
+    void write('\u0014');
+  }, [write]);
+
+  const handleOutputSwipe = React.useCallback((direction: 'up' | 'down') => {
+    sendPageKey(direction === 'down' ? 'up' : 'down');
+  }, [sendPageKey]);
+
+  const handleOutputMouseWheel = React.useCallback((event: TerminalMouseWheel) => {
+    void write(terminalMouseWheelSequence(event));
+  }, [write]);
+
+  const handleOutputScrollStateChange = React.useCallback((scrolling: boolean) => {
+    displayBufferRef.current?.setScrolling(scrolling);
+  }, []);
+
+  const hideTerminalKeyboard = React.useCallback(() => {
+    if (nativeTerminalInput) {
+      setKeyboardHideRequest(value => value >= Number.MAX_SAFE_INTEGER ? 1 : value + 1);
+    } else {
+      Keyboard.dismiss();
+      terminalInputRef.current?.blur();
+    }
+    setKeyboardVisible(false);
+  }, [nativeTerminalInput]);
+
+  const toggleTerminalKeyboard = React.useCallback(() => {
+    if (keyboardVisible) {
+      hideTerminalKeyboard();
+      return;
+    }
+    focusTerminalInput();
+  }, [focusTerminalInput, hideTerminalKeyboard, keyboardVisible]);
+
+  const submitTerminalInput = React.useCallback(() => {
+    clearKeyboardInput();
+    void write(applyOneShotModifiers('\r', ctrlActive, altActive));
+    releaseModifiers();
+  }, [altActive, clearKeyboardInput, ctrlActive, releaseModifiers, write]);
+  const toggleCtrl = React.useCallback(() => setCtrlActive(value => !value), []);
+  const toggleAlt = React.useCallback(() => setAltActive(value => !value), []);
+
+  React.useEffect(() => {
+    const activeSession = activeSessionRef.current;
+    if (activeSession === undefined || state !== 'running') return;
+    const requested = requestedSizeRef.current;
+    if (requested?.rows === size.rows && requested.columns === size.columns) return;
+    const expandedViewport = lastExpandedViewportRef.current;
+    const expandedRows = expandedViewport === undefined
+      ? undefined
+      : terminalSize(expandedViewport.height / TERMINAL_CELL_HEIGHT, size.columns).rows;
+    // The Android IME changes the React viewport height, but it should not
+    // resize the PTY/native parser. A SIGWINCH here makes Codex/Claude redraw
+    // their whole screen and causes the visible prompt to jump to the top.
+    // A shell has no full-screen redraw to protect: resize it like a desktop
+    // terminal so the prompt stays above the keyboard. Neither does a
+    // full-screen (alternate-screen) app like Codex: it redraws cleanly and
+    // fits its header and composer into the space above the keyboard.
+    if (nativeHarness && toolchain !== 'shell' && !nativeScreen.alternate && expandedRows !== undefined && size.columns === requested?.columns && size.rows < expandedRows) return;
+    const nextSize = {rows: size.rows, columns: size.columns};
+    requestedSizeRef.current = nextSize;
+    if (nativeHarness) {
+      const failResize = (errorCode: string) => {
+        if (mountedRef.current && activeSessionRef.current === activeSession) {
+          setState('error');
+          setError(errorCode);
+        }
+      };
+      client.resizeSession(nextRequestId('resize'), activeSession, nextSize.rows, nextSize.columns).then(result => {
+        if (result.kind === 'error') failResize(result.errorCode);
+      }).catch(() => failResize('terminal_resize_failed'));
+      return;
+    }
+    displayBufferRef.current?.resize(nextSize, async () => {
+      if (!mountedRef.current || activeSessionRef.current !== activeSession) return;
+      const result = await client.resizeSession(nextRequestId('resize'), activeSession, nextSize.rows, nextSize.columns);
+      if (result.kind === 'error') throw new Error('terminal_resize_failed');
+    });
+  }, [client, nativeHarness, nativeScreen.alternate, size.rows, size.columns, state, toolchain]);
+
+  const startupOverlay = (state === 'starting' || state === 'running') && toolchain !== 'shell' &&
+    (nativeOpenCode || (nativeSessionId !== undefined && !nativeHarnessReady) || (installReadyRef.current && !harnessFrameReady && frame?.alternate === true))
+    ? `Starting ${toolchainInstallLabel(toolchain)}…`
+    : undefined;
+  // An install stage on the wire means first-run provisioning is running:
+  // show the step-by-step screen instead of the apk transcript until the app
+  // paints. A failed stage hands the screen back to the log and its error.
+  // A native session draws its own frame. OpenCode counts as painted once
+  // its full-screen (alternate) view has text; the others at any text.
+  const nativePainted = nativeScreen.hasContent && (!nativeOpenCode || nativeScreen.alternate);
+  const appStarting = startupOverlay !== undefined && (nativeSessionId === undefined || !nativePainted);
+  const installFailed = installStage?.endsWith('_failed') === true;
+  const installActive = installStage !== undefined && !installFailed &&
+    toolchain !== 'shell' && (state === 'starting' || state === 'running') &&
+    (!readyMarkerSeenRef.current || appStarting);
+  const showInstallProgress = installActive && !installLogVisible;
+  // An app that is already installed gets the short "Starting …" screen.
+  const showStartup = !installActive && appStarting;
+  const appExitVisible = appExit !== undefined && state === 'stopped';
+  const installFailureVisible = installFailure !== undefined && state === 'error';
+
+  return (
+    <>
+      <StatusBar barStyle="light-content" />
+      <View style={styles.safeArea} testID="terminal-screen">
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0} style={styles.keyboardRoot}>
+          <TerminalHeader onBack={onBack} onHome={onHome} />
+
+          <View onLayout={handleOutputLayout} style={styles.output}>
+            <TerminalGrid
+              frame={frame}
+              nativeSessionId={nativeSessionId}
+              nativeRows={requestedSizeRef.current?.rows ?? size.rows}
+              nativeColumns={nativeSessionId !== undefined ? size.columns : requestedSizeRef.current?.columns ?? size.columns}
+              cellWidth={cellWidth}
+              running={running}
+              onNativeScreenChange={setNativeScreen}
+              onCellWidth={measureCellWidth}
+              onTap={focusTerminalInput}
+              onLinkPress={openTerminalLink}
+              onSwipe={handleOutputSwipe}
+              onMouseWheel={handleOutputMouseWheel}
+              onScrollStateChange={handleOutputScrollStateChange}
+              placeholder={`${toolchainInstallLabel(toolchain)} install starting…`}
+              onLayout={handleOutputLayout}
+            />
+            {showInstallProgress && installStage !== undefined ? (
+              <InstallProgressOverlay
+                download={installDownload}
+                step={Math.max(installStepForStage(installStage, toolchain), readyMarkerSeenRef.current ? 3 : 0)}
+                toolchain={toolchain}
+              />
+            ) : showStartup ? <InstallProgressOverlay toolchain={toolchain} /> : null}
+            {installActive ? (
+              // One toggle in one spot, drawn above both the progress screen
+              // and the log; elevation keeps it over the native canvas.
+              <View pointerEvents="box-none" style={styles.logToggleRow}>
+                <Pressable
+                  accessibilityLabel={installLogVisible ? 'Show install progress' : 'Show install log'}
+                  accessibilityRole="button"
+                  onPress={() => setInstallLogVisible(visible => !visible)}
+                  style={styles.logToggle}
+                  testID="terminal-install-log-toggle">
+                  <Text style={styles.logToggleText}>{installLogVisible ? 'SHOW PROGRESS' : 'SHOW LOG'}</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {appExitVisible ? (
+              <AppExitedOverlay
+                exit={appExit}
+                onBack={onHome ?? onBack}
+                onReport={reportAppExit}
+                onRestart={restartApp}
+                toolchain={toolchain}
+              />
+            ) : null}
+            {installFailureVisible ? (
+              <InstallFailedOverlay
+                failure={installFailure}
+                onBack={onHome ?? onBack}
+                onReport={reportInstallFailure}
+                onRetry={restartApp}
+                toolchain={toolchain}
+              />
+            ) : null}
+            <SessionLimitOverlay
+              client={client}
+              onBack={onHome ?? onBack}
+              onSessionFreed={start}
+              toolchain={toolchain}
+              visible={sessionLimitReached}
+            />
+          </View>
+
+          {nativeTerminalInput ? (
+            <NativeTerminalInput
+              ref={nativeTerminalInputRef}
+              sessionId={terminalInputSessionId}
+              terminalEnabled={running}
+              terminalAutoFocus
+              ctrlActive={ctrlActive}
+              altActive={altActive}
+              onModifiersConsumed={releaseModifiers}
+              keyboardShowRequest={keyboardShowRequest}
+              keyboardHideRequest={keyboardHideRequest}
+              lineResetRequest={keyboardLineResetRequest}
+              onLayout={() => {
+                const wasLayoutReady = inputLayoutReadyRef.current;
+                inputLayoutReadyRef.current = true;
+                if (running && !wasLayoutReady) nativeTerminalInputRef.current?.focus();
+              }}
+              pointerEvents="none"
+              style={styles.keyboardInput}
+              testID="terminal-input"
+            />
+          ) : (
+            <TextInput
+              ref={terminalInputRef}
+              autoCapitalize="none"
+              autoComplete="off"
+              autoCorrect={false}
+              autoFocus
+              editable={running}
+              importantForAutofill="noExcludeDescendants"
+              onChangeText={handleTerminalText}
+              onKeyPress={handleTerminalKeyPress}
+              onLayout={() => {
+                const wasLayoutReady = inputLayoutReadyRef.current;
+                inputLayoutReadyRef.current = true;
+                if (running && !wasLayoutReady) terminalInputRef.current?.focus();
+              }}
+              onSubmitEditing={submitTerminalInput}
+              submitBehavior="submit"
+              returnKeyType="send"
+              pointerEvents="none"
+              selectionColor="transparent"
+              showSoftInputOnFocus
+              style={styles.keyboardInput}
+              maxLength={4096}
+              testID="terminal-input"
+            />
+          )}
+
+          {outputHistoryGap ? (
+            <Text style={styles.historyNotice} testID="terminal-history-gap">
+              Some earlier terminal output is unavailable.
+            </Text>
+          ) : null}
+          {error !== undefined && !sessionLimitReached && !installFailureVisible ? <Text style={styles.error} testID="terminal-error">{error}</Text> : null}
+          {/* The limit, exit, and install-failure screens cover the terminal; nothing to type into. */}
+          {sessionLimitReached || appExitVisible || installFailureVisible ? null : <TerminalControls
+            altActive={altActive}
+            ctrlActive={ctrlActive}
+            keyboardVisible={keyboardVisible}
+            onArrow={sendArrow}
+            onEscape={sendEscape}
+            onKeyboardToggle={toggleTerminalKeyboard}
+            onPaste={pasteClipboard}
+            onReturn={submitTerminalInput}
+            onTerminalKey={sendTerminalKey}
+            onToggleAlt={toggleAlt}
+            onToggleCtrl={toggleCtrl}
+            onToggleTranscriptPager={toggleCodexTranscriptPager}
+            running={running}
+            toolchain={toolchain}
+            transcriptPagerOpen={transcriptPagerOpen}
+          />}
+        </KeyboardAvoidingView>
+      </View>
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: {backgroundColor: TERMINAL_BACKGROUND, flex: 1, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0},
+  keyboardRoot: {flex: 1},
+  floatingHeader: {alignItems: 'center', flexDirection: 'row', justifyContent: 'flex-end', left: 0, paddingHorizontal: 12, position: 'absolute', right: 0, top: 8, zIndex: 10},
+  floatingGroup: {alignItems: 'center', borderColor: 'rgba(48, 56, 59, 0.65)', borderRadius: 22, borderWidth: 1, flexDirection: 'row', height: 44, justifyContent: 'center', paddingHorizontal: 5},
+  menuArrowText: {color: uiColors.accent, fontFamily: UI_FONT_FAMILY, fontSize: 20, fontWeight: '800', includeFontPadding: false, lineHeight: 22, textAlign: 'center', width: 34},
+  output: {backgroundColor: TERMINAL_BACKGROUND, flex: 1, overflow: 'hidden'},
+  error: {color: uiColors.danger, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
+  logToggleRow: {alignItems: 'center', bottom: 24, elevation: 8, left: 0, position: 'absolute', right: 0, zIndex: 8},
+  logToggle: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 8, borderWidth: 1, justifyContent: 'center', minHeight: 36, paddingHorizontal: 16},
+  logToggleText: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 9, fontWeight: '800', letterSpacing: 0.6},
+  historyNotice: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, paddingHorizontal: 18, paddingTop: 8},
+  keyboardInput: {backgroundColor: 'transparent', bottom: 98, color: 'transparent', height: 34, left: 14, opacity: 0.02, padding: 0, position: 'absolute', right: 14, zIndex: 3},
+});
+
+export default TerminalScreen;
