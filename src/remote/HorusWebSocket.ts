@@ -31,7 +31,7 @@ export class HorusWebSocket {
 
   constructor() {
     // Listen to native events
-    eventEmitter.addListener('onWebSocketMessage', this.handleMessage.bind(this));
+    eventEmitter.addListener('onWebSocketMessage', (event: unknown) => this.handleMessage(event as { type: string; data: string }));
     eventEmitter.addListener('onWebSocketConnect', this.handleConnect.bind(this));
     eventEmitter.addListener('onWebSocketDisconnect', this.handleDisconnect.bind(this));
   }

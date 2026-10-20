@@ -192,12 +192,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: uiColors.text,
+    color: uiColors.ink,
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
-    color: uiColors.textSecondary,
+    color: uiColors.inkSecondary,
     marginBottom: 24,
   },
   statusBar: {
@@ -216,14 +216,14 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 16,
-    color: uiColors.text,
+    color: uiColors.ink,
   },
   field: {
     marginBottom: 16,
   },
   label: {
     fontSize: 14,
-    color: uiColors.textSecondary,
+    color: uiColors.inkSecondary,
     marginBottom: 8,
   },
   input: {
@@ -233,8 +233,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
-    color: uiColors.text,
-    backgroundColor: uiColors.surface,
+    color: uiColors.ink,
+    backgroundColor: uiColors.panel,
   },
   tunnelOptions: {
     flexDirection: 'row',
@@ -255,7 +255,7 @@ const styles = StyleSheet.create({
   },
   tunnelButtonText: {
     fontSize: 14,
-    color: uiColors.text,
+    color: uiColors.ink,
   },
   tunnelButtonTextActive: {
     color: '#FFFFFF',
@@ -277,7 +277,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   disconnectButton: {
-    backgroundColor: uiColors.error,
+    backgroundColor: uiColors.danger,
     paddingVertical: 14,
     borderRadius: 8,
     alignItems: 'center',
@@ -289,14 +289,14 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   urlButton: {
-    backgroundColor: uiColors.surface,
+    backgroundColor: uiColors.panel,
     padding: 12,
     borderRadius: 8,
     marginBottom: 12,
   },
   urlLabel: {
     fontSize: 12,
-    color: uiColors.textSecondary,
+    color: uiColors.inkSecondary,
     marginBottom: 4,
   },
   urlText: {
@@ -306,7 +306,7 @@ const styles = StyleSheet.create({
   },
   helpText: {
     fontSize: 12,
-    color: uiColors.textSecondary,
+    color: uiColors.inkSecondary,
     textAlign: 'center',
   },
 });
