@@ -34,7 +34,7 @@ import {consumeLaunchSessionId} from './src/terminal/session/launchSession';
 import {sessionTitle} from './src/terminal/toolchainLabels';
 import {createRequestIdFactory} from './src/terminal/requestIds';
 
-type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'user' | 'add-user' | 'github-account' | 'projects' | 'files' | 'terminal';
+type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'user' | 'add-user' | 'github-account' | 'projects' | 'files' | 'terminal' | 'websocket';
 type BootState = 'checking' | 'installing' | 'error';
 
 const BOOT_REQUEST_ID = 'horus-bootstrap-1';
