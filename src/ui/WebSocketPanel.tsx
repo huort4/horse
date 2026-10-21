@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 
 const { HorusWebSocketModule } = NativeModules;
-const eventEmitter = new NativeEventEmitter(HorusWebSocketModule);
+const eventEmitter = HorusWebSocketModule ? new NativeEventEmitter(HorusWebSocketModule) : null;
 
 type Props = {
   onSessionStart?: () => void;
@@ -28,6 +28,8 @@ export function WebSocketPanel({ onSessionStart, onSessionEnd }: Props) {
   useEffect(() => {
     // Generate random session ID
     setSessionId('horus-' + Math.random().toString(36).substring(2, 15));
+
+    if (!eventEmitter) return; // Skip in test environment
 
     // Listen to events
     const connectSub = eventEmitter.addListener('onWebSocketConnect', () => {
