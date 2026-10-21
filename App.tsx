@@ -721,6 +721,13 @@ function App(): React.JSX.Element {
   if (route === 'websocket') {
     return <WebSocketPanel />;
   }
+  
+  // Check for special websocket target
+  if (terminalTarget.eyebrow === 'WEBSOCKET' && terminalTarget.title === 'Remote Access') {
+    setRoute('websocket');
+    return null;
+  }
+  
   if (route === 'files') {
     return <FileExplorerScreen onBack={() => setRoute('home')} />;
   }

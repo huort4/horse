@@ -271,6 +271,16 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, 
               <AppTile logo="opencode" title="OpenCode" onPress={() => onOpen({title: 'OpenCode', eyebrow: 'AI WORKBENCH', command: buildZshScriptCommand('opencode'), toolchain: 'opencode'})} />
               <AppTile icon=">_" title="Bare terminal" onPress={() => onOpen({title: 'Bare terminal', eyebrow: 'SHELL', command: buildZshCommand('mkdir -p /workspace/projects && cd /workspace/projects && exec zsh -l'), toolchain: 'shell'})} />
             </View>
+
+            <View style={styles.toolRow}>
+              <AppTile icon="🌐" title="Remote Access" onPress={() => {
+                // Directly route to websocket
+                if (typeof onOpen === 'function') {
+                  // Use a special target that routes to websocket
+                  onOpen({title: 'Remote Access', eyebrow: 'WEBSOCKET', command: '', toolchain: 'shell'});
+                }
+              }} />
+            </View>
           </View>
 
           <Pressable accessibilityRole="button" onPress={() => onOpen({title: 'Files', eyebrow: 'WORKSPACE', kind: 'files'})} style={styles.filesTile} testID="metro-files">
