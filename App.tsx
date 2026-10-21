@@ -17,6 +17,7 @@ import {setupOnboardingProfile} from './src/profile/onboardingSetup';
 import {readDownloadSources, writeDownloadSources} from './src/terminal/downloadSources';
 import {LoadingScreen} from './src/ui/LoadingScreen';
 import {MetroHomeScreen, type MetroLaunchTarget} from './src/ui/MetroHomeScreen';
+import {WebSocketPanel} from './src/ui/WebSocketPanel';
 import {OnboardingScreen, type OnboardingActions, type RootfsSetupResult} from './src/ui/OnboardingScreen';
 import {AddUserScreen} from './src/ui/AddUserScreen';
 import {ProjectHubScreen} from './src/ui/ProjectHubScreen';
@@ -716,6 +717,9 @@ function App(): React.JSX.Element {
         toolName={selectedHarness?.title ?? 'Harness'}
       />
     );
+  }
+  if (route === 'websocket') {
+    return <WebSocketPanel />;
   }
   if (route === 'files') {
     return <FileExplorerScreen onBack={() => setRoute('home')} />;
