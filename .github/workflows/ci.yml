@@ -93,6 +93,20 @@ jobs:
         run: ./gradlew :app:testDebugUnitTest :app:assembleRelease --no-daemon --stacktrace --max-workers=2
       - name: Validate APK and record metadata
         run: node scripts/ci/verify-apk.js android/app/build/outputs/apk/release/app-release-unsigned.apk
+      - name: Sign APK
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > horus-release.keystore
+          apksigner sign \
+            --ks horus-release.keystore \
+            --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
+            --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+            --ks-key-alias ${{ secrets.KEY_ALIAS }} \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out app-release-signed.apk \
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+          rm horus-release.keystore
       - name: Retain JVM reports
         if: ${{ always() && !cancelled() }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -103,12 +117,12 @@ jobs:
             android/app/build/test-results/
           if-no-files-found: warn
           retention-days: 7
-      - name: Retain validated unsigned APK (not for installation)
+      - name: Retain signed APK
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: unsigned-release-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          name: app-release-signed-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            android/app/build/outputs/apk/release/app-release-unsigned.apk
+            app-release-signed.apk
             artifacts/ci/apk-metadata.json
           if-no-files-found: error
           retention-days: 7
