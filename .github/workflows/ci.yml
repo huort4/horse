@@ -53,7 +53,7 @@ jobs:
           grep -q 'HORUS_FORCE_TS_UNIT_FAILURE' failure-probe.log
       - name: Retain Jest report
         if: ${{ always() && !cancelled() }}
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jest-results-${{ github.run_id }}-${{ github.run_attempt }}
           path: jest-results.json
@@ -109,7 +109,7 @@ jobs:
           rm horus-release.keystore
       - name: Retain JVM reports
         if: ${{ always() && !cancelled() }}
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: android-test-reports-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -118,7 +118,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Retain signed APK
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: app-release-signed-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
