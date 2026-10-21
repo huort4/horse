@@ -47,7 +47,7 @@ export function WebSocketPanel({ onSessionStart, onSessionEnd }: Props) {
     });
 
     const errorSub = eventEmitter.addListener('onWebSocketError', (error) => {
-      Alert.alert('Error', error);
+      Alert.alert('Error', String(error));
       setConnecting(false);
     });
 
