@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,12 @@ import {
   StyleSheet,
   TextInput,
   Alert,
-  Clipboard,
+  NativeEventEmitter,
+  NativeModules,
 } from 'react-native';
-import { webSocket, WebSocketConfig } from '../remote/HorusWebSocket';
-import { uiColors } from './brand';
+
+const { HorusWebSocketModule } = NativeModules;
+const eventEmitter = new NativeEventEmitter(HorusWebSocketModule);
 
 type Props = {
   onSessionStart?: () => void;
@@ -19,70 +21,73 @@ type Props = {
 export function WebSocketPanel({ onSessionStart, onSessionEnd }: Props) {
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [deviceId, setDeviceId] = useState('');
-  const [connectionUrl, setConnectionUrl] = useState('');
-  const [tunnelService, setTunnelService] = useState<'cloudflare' | 'ngrok'>('cloudflare');
+  const [relayUrl, setRelayUrl] = useState('https://horus-relay.huorty4.workers.dev');
+  const [sessionId, setSessionId] = useState('');
+  const [token, setToken] = useState('');
 
   useEffect(() => {
-    // Generate device ID
-    const generateDeviceId = async () => {
-      const id = `horus-${Date.now().toString(36)}`;
-      setDeviceId(id);
-    };
-    generateDeviceId();
+    // Generate random session ID
+    setSessionId('horus-' + Math.random().toString(36).substring(2, 15));
 
-    // Listen to connection events
-    const unsubscribe = webSocket.onConnect(() => {
+    // Listen to events
+    const connectSub = eventEmitter.addListener('onWebSocketConnect', () => {
       setConnected(true);
       setConnecting(false);
       onSessionStart?.();
     });
 
-    return () => {
-      unsubscribe();
-    };
-  }, [onSessionStart]);
+    const disconnectSub = eventEmitter.addListener('onWebSocketDisconnect', () => {
+      setConnected(false);
+      setConnecting(false);
+      onSessionEnd?.();
+    });
 
-  const handleConnect = useCallback(async () => {
-    if (connecting) return;
+    const messageSub = eventEmitter.addListener('onWebSocketMessage', (event) => {
+      console.log('WebSocket message:', event);
+    });
+
+    const errorSub = eventEmitter.addListener('onWebSocketError', (error) => {
+      Alert.alert('Error', error);
+      setConnecting(false);
+    });
+
+    return () => {
+      connectSub.remove();
+      disconnectSub.remove();
+      messageSub.remove();
+      errorSub.remove();
+    };
+  }, [onSessionStart, onSessionEnd]);
+
+  const handleConnect = async () => {
+    if (!token || token.length < 16) {
+      Alert.alert('Error', 'Token must be at least 16 characters');
+      return;
+    }
+
+    if (!sessionId || sessionId.length < 8) {
+      Alert.alert('Error', 'Session ID must be at least 8 characters');
+      return;
+    }
 
     setConnecting(true);
+
     try {
-      const config: WebSocketConfig = {
-        tunnelService,
-        deviceId,
-      };
-
-      const url = await webSocket.connect(config);
-      setConnectionUrl(url);
-
-      Alert.alert(
-        'Connected!',
-        `Access your terminal at:\n${url}`,
-        [
-          { text: 'Copy URL', onPress: () => Clipboard.setString(url) },
-          { text: 'OK' }
-        ]
-      );
-    } catch (error) {
-      Alert.alert('Connection Failed', String(error));
+      await HorusWebSocketModule.connectAsHost(relayUrl, sessionId, token);
+    } catch (error: any) {
+      Alert.alert('Connection Failed', error.message);
       setConnecting(false);
     }
-  }, [connecting, deviceId, tunnelService]);
+  };
 
-  const handleDisconnect = useCallback(() => {
-    webSocket.disconnect();
-    setConnected(false);
-    setConnectionUrl('');
-    onSessionEnd?.();
-  }, [onSessionEnd]);
-
-  const copyConnectionUrl = useCallback(() => {
-    if (connectionUrl) {
-      Clipboard.setString(connectionUrl);
-      Alert.alert('Copied!', 'Connection URL copied to clipboard');
+  const handleDisconnect = async () => {
+    try {
+      await HorusWebSocketModule.disconnect();
+      setConnected(false);
+    } catch (error: any) {
+      Alert.alert('Error', error.message);
     }
-  }, [connectionUrl]);
+  };
 
   if (connected) {
     return (
@@ -92,14 +97,16 @@ export function WebSocketPanel({ onSessionStart, onSessionEnd }: Props) {
           <Text style={styles.statusText}>Connected</Text>
         </View>
 
-        <TouchableOpacity style={styles.urlButton} onPress={copyConnectionUrl}>
-          <Text style={styles.urlLabel}>Connection URL:</Text>
-          <Text style={styles.urlText}>{connectionUrl}</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.helpText}>
-          Open the URL above in a browser to access your terminal
-        </Text>
+        <View style={styles.infoBox}>
+          <Text style={styles.infoTitle}>Connection Details:</Text>
+          <Text style={styles.infoText}>Session ID: {sessionId}</Text>
+          <Text style={styles.infoText}>
+            Connect from browser:
+          </Text>
+          <Text style={styles.infoCode}>
+            wss://horus-relay.huorty4.workers.dev/client?id={sessionId}&token=YOUR_TOKEN
+          </Text>
+        </View>
 
         <TouchableOpacity style={styles.disconnectButton} onPress={handleDisconnect}>
           <Text style={styles.disconnectButtonText}>Disconnect</Text>
@@ -114,72 +121,51 @@ export function WebSocketPanel({ onSessionStart, onSessionEnd }: Props) {
       <Text style={styles.subtitle}>Access your terminal from anywhere</Text>
 
       <View style={styles.field}>
-        <Text style={styles.label}>Device ID</Text>
+        <Text style={styles.label}>Relay Server URL</Text>
         <TextInput
           style={styles.input}
-          value={deviceId}
-          onChangeText={setDeviceId}
-          placeholder="horus-xxxxxx"
+          value={relayUrl}
+          onChangeText={setRelayUrl}
+          placeholder="https://your-worker.workers.dev"
           autoCapitalize="none"
+          autoCorrect={false}
         />
       </View>
 
       <View style={styles.field}>
-        <Text style={styles.label}>Tunnel Service</Text>
-        <View style={styles.tunnelOptions}>
-          <TouchableOpacity
-            style={[
-              styles.tunnelButton,
-              tunnelService === 'cloudflare' && styles.tunnelButtonActive,
-            ]}
-            onPress={() => setTunnelService('cloudflare')}
-          >
-            <Text
-              style={[
-                styles.tunnelButtonText,
-                tunnelService === 'cloudflare' && styles.tunnelButtonTextActive,
-              ]}
-            >
-              Cloudflare
-            </Text>
-          </TouchableOpacity>
+        <Text style={styles.label}>Session ID</Text>
+        <TextInput
+          style={styles.input}
+          value={sessionId}
+          onChangeText={setSessionId}
+          placeholder="horus-xxxxxx"
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+      </View>
 
-          <TouchableOpacity
-            style={[
-              styles.tunnelButton,
-              tunnelService === 'ngrok' && styles.tunnelButtonActive,
-            ]}
-            onPress={() => setTunnelService('ngrok')}
-          >
-            <Text
-              style={[
-                styles.tunnelButtonText,
-                tunnelService === 'ngrok' && styles.tunnelButtonTextActive,
-              ]}
-            >
-              ngrok
-            </Text>
-          </TouchableOpacity>
-        </View>
+      <View style={styles.field}>
+        <Text style={styles.label}>Authentication Token</Text>
+        <TextInput
+          style={styles.input}
+          value={token}
+          onChangeText={setToken}
+          placeholder="Your relay token"
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
       </View>
 
       <TouchableOpacity
-        style={[
-          styles.connectButton,
-          connecting && styles.connectButtonDisabled,
-        ]}
+        style={[styles.button, connecting && styles.buttonDisabled]}
         onPress={handleConnect}
         disabled={connecting}
       >
-        <Text style={styles.connectButtonText}>
-          {connecting ? 'Connecting...' : 'Connect'}
+        <Text style={styles.buttonText}>
+          {connecting ? 'Connecting...' : 'Connect as Host'}
         </Text>
       </TouchableOpacity>
-
-      <Text style={styles.helpText}>
-        This will create a secure tunnel to your device using {tunnelService}.
-        You can then access your terminal from any web browser.
-      </Text>
     </View>
   );
 }
@@ -187,18 +173,8 @@ export function WebSocketPanel({ onSessionStart, onSessionEnd }: Props) {
 const styles = StyleSheet.create({
   container: {
     padding: 16,
-    backgroundColor: uiColors.background,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: uiColors.ink,
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: uiColors.subdued,
-    marginBottom: 24,
+    backgroundColor: '#0a0a0a',
+    borderRadius: 8,
   },
   statusBar: {
     flexDirection: 'row',
@@ -206,107 +182,96 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     marginRight: 8,
   },
   statusConnected: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: '#00ff9f',
   },
   statusText: {
+    color: '#e0e0e0',
     fontSize: 16,
-    color: uiColors.ink,
+    fontWeight: 'bold',
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#00ff9f',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#999',
+    marginBottom: 20,
   },
   field: {
     marginBottom: 16,
   },
   label: {
-    fontSize: 14,
-    color: uiColors.subdued,
-    marginBottom: 8,
+    color: '#999',
+    fontSize: 12,
+    marginBottom: 6,
   },
   input: {
-    borderWidth: 1,
-    borderColor: uiColors.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-    color: uiColors.ink,
-    backgroundColor: uiColors.panel,
-  },
-  tunnelOptions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  tunnelButton: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: uiColors.border,
-    alignItems: 'center',
-  },
-  tunnelButtonActive: {
-    backgroundColor: uiColors.accent,
-    borderColor: uiColors.accent,
-  },
-  tunnelButtonText: {
+    backgroundColor: '#1a1a1a',
+    color: '#fff',
+    padding: 12,
+    borderRadius: 6,
     fontSize: 14,
-    color: uiColors.ink,
+    borderWidth: 1,
+    borderColor: '#333',
   },
-  tunnelButtonTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
-  connectButton: {
-    backgroundColor: uiColors.accent,
-    paddingVertical: 14,
-    borderRadius: 8,
+  button: {
+    backgroundColor: '#00ff9f',
+    padding: 14,
+    borderRadius: 6,
+    marginTop: 8,
     alignItems: 'center',
-    marginBottom: 16,
   },
-  connectButtonDisabled: {
+  buttonDisabled: {
     opacity: 0.6,
   },
-  connectButtonText: {
+  buttonText: {
+    color: '#000',
+    fontWeight: 'bold',
     fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
   },
   disconnectButton: {
-    backgroundColor: uiColors.danger,
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
+    backgroundColor: '#ff4444',
+    padding: 14,
+    borderRadius: 6,
     marginTop: 16,
+    alignItems: 'center',
   },
   disconnectButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
     fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
   },
-  urlButton: {
-    backgroundColor: uiColors.panel,
+  infoBox: {
+    marginTop: 16,
     padding: 12,
-    borderRadius: 8,
-    marginBottom: 12,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 6,
+    borderLeftWidth: 3,
+    borderLeftColor: '#00ff9f',
   },
-  urlLabel: {
+  infoTitle: {
+    color: '#00ff9f',
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  infoText: {
+    color: '#999',
     fontSize: 12,
-    color: uiColors.subdued,
     marginBottom: 4,
   },
-  urlText: {
-    fontSize: 14,
-    color: uiColors.accent,
-    fontWeight: '500',
-  },
-  helpText: {
-    fontSize: 12,
-    color: uiColors.subdued,
-    textAlign: 'center',
+  infoCode: {
+    color: '#00ff9f',
+    fontSize: 11,
+    fontFamily: 'monospace',
+    marginTop: 4,
   },
 });
