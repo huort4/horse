@@ -2,6 +2,7 @@ package com.scariflabs.horus.terminal
 
 import android.util.Log
 import okhttp3.*
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.internal.ws.RealWebSocket
 import okio.ByteString
 import org.json.JSONObject
@@ -36,7 +37,7 @@ class HorusWebSocketServer(
    * @param deviceId Unique device identifier
    */
   fun connect(serverUrl: String, deviceId: String) {
-    val url = HttpUrl.parse(serverUrl)?.newBuilder()
+    val url = serverUrl.toHttpUrlOrNull()?.newBuilder()
       ?.addQueryParameter("device", deviceId)
       ?.addQueryParameter("type", "host")
       ?.build()
