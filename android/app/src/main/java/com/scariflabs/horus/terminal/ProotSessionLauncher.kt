@@ -1405,29 +1405,9 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
           for venv_dir in /usr/lib/python3.*/ensurepip; do [ -d "${'$'}venv_dir" ] && return 0; done
           return 1
         }
-        pkgs_github="ca-certificates git openssh-client gh zsh"
-        pkgs_claude="bash curl ca-certificates git openssh-client zsh"
-        # npm itself comes from npm's own release; see install_upstream_npm.
-        pkgs_node="bash ca-certificates git openssh-client nodejs zsh"
-        pkgs_procps="procps"
-        # Rewritten every time so an older Horus's settings are replaced.
-        mkdir -p /etc/apt/apt.conf.d /etc/dpkg/dpkg.cfg.d
-        printf '%s\n' 'APT::Sandbox::User "root";' 'Acquire::Retries "3";' 'Acquire::Languages "none";' 'Dpkg::Use-Pty "0";' 'APT::Install-Recommends "0";' 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99horus
-        # Every file dpkg writes is a trapped syscall under PRoot. Skip its
-        # per-file fsync (a broken install is simply provisioned again) and
-        # the docs, manuals, and translations nothing here reads.
-        printf '%s\n' force-unsafe-io \
-          'path-exclude=/usr/share/doc/*' 'path-include=/usr/share/doc/*/copyright' \
-          'path-exclude=/usr/share/man/*' 'path-exclude=/usr/share/info/*' \
-          'path-exclude=/usr/share/locale/*' 'path-include=/usr/share/locale/locale.alias' \
-          'path-exclude=/usr/share/lintian/*' > /etc/dpkg/dpkg.cfg.d/99horus
-        export DEBIAN_FRONTEND=noninteractive
-      else
-        horus_pkg=apk
         pkgs_shell="ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh"
-        pkgs_github="ca-certificates git openssh-client-default github-cli zsh"
-        pkgs_claude="bash curl ca-certificates git openssh-client-default zsh libgcc libstdc++"
-        pkgs_node="bash ca-certificates git openssh-client-default nodejs npm zsh libgcc libstdc++"
+        # Core packages only - removed AI tools to save space
+        pkgs_base="bash ca-certificates curl git openssh-client-default python3 zsh"
         pkgs_procps="procps-ng"
         has_python_venv() { true; }
       fi
@@ -1842,31 +1822,11 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
             fi
           fi
         fi
-      elif [ "${'$'}target" = claude ]; then
-        if ! command -v zsh >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || [ ! -f /root/.cache/horus/claude.ready ]; then
-          mark_provision_stage apk
-          if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_claude; then
-            if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
-              mark_provision_stage apk_failed
-              exit 21
-            fi
-          fi
-        fi
-      else
-        # Debian's npm is installed separately below, so only apk's counts here.
-        if ! command -v zsh >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || { [ "${'$'}horus_pkg" = apk ] && ! command -v npm >/dev/null 2>&1; }; then
-          mark_provision_stage apk
-          if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_node; then
-            if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1 || { [ "${'$'}horus_pkg" = apk ] && ! command -v npm >/dev/null 2>&1; }; then
-              mark_provision_stage apk_failed
-              exit 21
-            fi
-          fi
-        fi
-        # Also replaces the npm 9 that pre-release Debian builds installed with apt.
-        if [ "${'$'}horus_pkg" = apt ] && ! has_upstream_npm; then
-          mark_provision_stage apk
-          if ! install_upstream_npm >>/root/.cache/horus/alpine-bootstrap.log 2>&1; then
+      # Shell-only installation - removed AI tools to save space
+      if ! command -v zsh >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+        mark_provision_stage apk
+        if ! pkg_install /root/.cache/horus/alpine-bootstrap.log bash ca-certificates curl zsh; then
+          if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
             mark_provision_stage apk_failed
             exit 21
           fi
