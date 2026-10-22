@@ -290,7 +290,6 @@ class TerminalSessionService : Service() {
   override fun onDestroy() {
     stopping = true
     TerminalDebugLog.record(this, "service_destroyed")
-    handler.removeCallbacks(turnTick)
     stopProvisionProcess()
     if (remoteServerDelegate.isInitialized()) runCatching { remoteServer.close() }
     provisionExecutor.shutdownNow()
