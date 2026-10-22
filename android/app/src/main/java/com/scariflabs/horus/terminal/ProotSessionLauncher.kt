@@ -734,13 +734,9 @@ class ProotSessionLauncher(
         if (row == index) listOf(profileUsername, groupFields[1], groupFields[2], "").joinToString(":") else line
       }
     } else if (profileGroupIndexes.isNotEmpty()) {
-      // A prior interrupted migration may already have renamed the group but
-      // not committed the passwd row. Accept only the exact renamed form.
-      val profileGroup = profileGroupIndexes.singleOrNull()?.let(groupLines::get)
-      if (
-        profileGroupIndexes.size != 1 ||
-        gidRows.size != 1 ||
-        profileGroup != "$profileUsername:x:$GUEST_GID:"
+      // A prior interrupted migration left the new group name already in place.
+      if (profileGroupIndexes.size != 1 ||
+        groupLines[profileGroupIndexes.single()].split(':').getOrNull(2) != GUEST_GID.toString()
       ) {
         throw IllegalStateException("fixed profile group conflicts with migration")
       }
@@ -997,7 +993,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
      * same script serves either rootfs. apt runs as root under PRoot, where
      * it cannot drop to its _apt sandbox user, and refreshes its lists at
      * most once a day.
-
+     */
     internal val PACKAGE_MANAGER_SCRIPT = """
       if [ -x /usr/bin/apt-get ]; then
         horus_pkg=apt
@@ -1160,6 +1156,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
             fi
           fi
         fi
+      fi
       # sudo's root helper is Python. The Bare terminal installs it with its
       # tools; install it with whatever opens first, so sudo works from the
       # first sign-in. A failure leaves sudo unavailable, not the app.
@@ -1374,7 +1371,6 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
     const val DEFAULT_TERM = "xterm-256color"
     private val USERNAME_PATTERN = Regex("[A-Za-z0-9._-]{1,32}")
 
-    /**
     /**
      * Stand-ins for global /proc files Android hides from apps: /proc/stat
      * (with a real `btime`) and loadavg, so BusyBox top and other tools
