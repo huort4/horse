@@ -10,7 +10,7 @@ import org.junit.Test
 
 class NativeTerminalEngineTest {
   @Test
-  fun parsesOpenCodeAlternateScreenAndPublishesNativeFrame() {
+  fun parsesAlternateScreenAndPublishesNativeFrame() {
     val engine = NativeTerminalEngine("s-native-test", 4, 12) { _, _ -> }
     try {
       assertTrue(

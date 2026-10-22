@@ -1,6 +1,6 @@
 import {
   buildProjectCloneCommand,
-  harnessSessionTarget,
+  projectSessionTarget,
   printHiddenMarker,
   workspaceProjectDirectory,
 } from '../src/projects/projectCommands';
@@ -77,36 +77,16 @@ describe('buildProjectCloneCommand', () => {
   });
 });
 
-describe('harnessSessionTarget', () => {
+describe('projectSessionTarget', () => {
   const directory = '/workspace/projects/demo';
   const preamble = String.raw`stty echo 2>/dev/null || true; if ! command -v zsh >/dev/null 2>&1; then printf '%s\n' 'zsh is not available yet; close and reopen this terminal to retry' >&2; exit 127; fi;`;
 
-  it('starts Claude with its messaging socket in an interactive login zsh', () => {
-    expect(harnessSessionTarget({title: 'Claude Code', eyebrow: 'HARNESS', toolchain: 'claude'}, 'demo', directory)).toEqual({
-      title: 'Claude Code',
+  it('opens the project folder in an interactive login zsh', () => {
+    expect(projectSessionTarget({title: 'Bare terminal', eyebrow: 'PROJECTS', toolchain: 'shell'}, 'demo', directory)).toEqual({
+      title: 'Bare terminal',
       eyebrow: 'demo',
-      command: `${preamble} exec zsh -lic 'mkdir -p '\\''/workspace/projects/demo'\\'' && cd '\\''/workspace/projects/demo'\\'' && exec claude --messaging-socket-path "/tmp/claude-messaging-$(id -u)/$$.sock"'`,
-      toolchain: 'claude',
-      returnTo: 'home',
-    });
-  });
-
-  it('starts Codex in an interactive login zsh', () => {
-    expect(harnessSessionTarget({title: 'Codex', eyebrow: 'HARNESS', toolchain: 'codex'}, 'demo', directory)).toEqual({
-      title: 'Codex',
-      eyebrow: 'demo',
-      command: `${preamble} exec zsh -lic 'mkdir -p '\\''/workspace/projects/demo'\\'' && cd '\\''/workspace/projects/demo'\\'' && exec codex'`,
-      toolchain: 'codex',
-      returnTo: 'home',
-    });
-  });
-
-  it('starts OpenCode through the script zsh without startup files', () => {
-    expect(harnessSessionTarget({title: 'OpenCode', eyebrow: 'HARNESS', toolchain: 'opencode'}, 'demo', directory)).toEqual({
-      title: 'OpenCode',
-      eyebrow: 'demo',
-      command: `${preamble} exec zsh -fc 'mkdir -p '\\''/workspace/projects/demo'\\'' && cd '\\''/workspace/projects/demo'\\'' && exec opencode'`,
-      toolchain: 'opencode',
+      command: `${preamble} exec zsh -lic 'mkdir -p '\\''/workspace/projects/demo'\\'' && cd '\\''/workspace/projects/demo'\\'' && exec zsh -l'`,
+      toolchain: 'shell',
       returnTo: 'home',
     });
   });

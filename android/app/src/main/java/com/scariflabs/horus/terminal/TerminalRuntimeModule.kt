@@ -217,11 +217,10 @@ class TerminalRuntimeModule(
         val bytes = event.getByteArray(TerminalSessionServiceProtocol.KEY_BYTES)
         if (seq < 1L || bytes == null || bytes.isEmpty() || bytes.size > TerminalSessionSupervisor.READ_CHUNK_BYTES) return
         val target = event.getString(TerminalSessionServiceProtocol.KEY_TARGET)
-        val harness = isNativeHarnessTarget(target)
-        // Shell output always feeds the native parser, but only an interactive
-        // shell binds a native canvas. One-off shell commands never bind one,
-        // so their output keeps flowing to the JS completion-marker scan.
-        val nativeOutput = harness || target == TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL
+        // Shell output feeds the native parser, but only an interactive shell
+        // binds a native canvas. One-off shell commands never bind one, so
+        // their output keeps flowing to the JS completion-marker scan.
+        val nativeOutput = target == TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL
         val nativeReadyBefore = nativeOutput && isNativeSessionReady(sessionId)
         if (nativeOutput) {
           val rows = event.getInt(TerminalSessionServiceProtocol.KEY_ROWS, DEFAULT_SESSION_ROWS)
@@ -230,7 +229,7 @@ class TerminalRuntimeModule(
             TerminalDebugLog.record(appContext, "native_engine_queue_full session=$sessionId seq=$seq")
           }
           if (!nativeReadyBefore && nativeReadyMarkerSeen(sessionId, bytes) &&
-            (harness || NativeTerminalEngineRegistry.isRendered(sessionId))
+            NativeTerminalEngineRegistry.isRendered(sessionId)
           ) {
             markNativeSessionReady(sessionId)
           }
@@ -676,8 +675,8 @@ class TerminalRuntimeModule(
   }
 
   /**
-   * Installs only the requested Alpine shell base or launcher harness before
-   * its session. The foreground service owns the bounded root PRoot command;
+   * Installs only the requested Alpine shell base or GitHub CLI before its
+   * session. The foreground service owns the bounded root PRoot command;
    * the UI bridge only carries the typed result back to JavaScript.
    */
   override fun provisionToolchain(request: ReadableMap, promise: Promise) {
@@ -1268,10 +1267,6 @@ class TerminalRuntimeModule(
   }
 
   private fun isInvalidated(): Boolean = invalidated.get()
-
-  private fun isNativeHarnessTarget(target: String?): Boolean = target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE ||
-    target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX ||
-    target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE
 
   override fun invalidate() {
     invalidated.set(true)

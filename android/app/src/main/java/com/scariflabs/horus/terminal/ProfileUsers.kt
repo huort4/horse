@@ -198,9 +198,8 @@ class ProfileUsersCore(
     private val USERNAME_PATTERN = Regex("^[a-z_][a-z0-9_-]{0,31}$")
 
     /**
-     * Names that already exist in the Alpine or Debian rootfs, or that Horus
-     * uses for harness accounts. Taking one would collide with a system
-     * account inside the guest.
+     * Names that already exist in the Alpine or Debian rootfs. Taking one
+     * would collide with a system account inside the guest.
      */
     private val RESERVED_USERNAMES = setOf(
       "root", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail", "news", "uucp", "proxy",
@@ -213,7 +212,7 @@ class ProfileUsersCore(
 
     /** Lowercase Linux login names that cannot collide with a guest system account. */
     fun isValidUsername(username: String): Boolean =
-      USERNAME_PATTERN.matches(username) && username !in RESERVED_USERNAMES && !username.startsWith("harness_")
+      USERNAME_PATTERN.matches(username) && username !in RESERVED_USERNAMES
 
     fun isValidPassword(password: String): Boolean =
       password.length in 4..128 && password.all { character ->

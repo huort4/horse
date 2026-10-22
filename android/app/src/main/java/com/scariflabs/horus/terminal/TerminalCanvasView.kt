@@ -662,7 +662,7 @@ class TerminalCanvasView(context: Context) : View(context) {
   }
 
   /**
-   * Fira Code lacks the TUI symbols Claude Code and other harnesses draw
+   * Fira Code lacks the TUI symbols some full-screen apps draw
    * (⏵ ⏺ ⏸ ✻ ❯ ...), and Android either has no glyph for them or only a colour
    * emoji. On API 29+ a bundled Noto Sans Symbols 2 subset sits between Fira
    * Code and the system fallback so they render as monochrome text glyphs.

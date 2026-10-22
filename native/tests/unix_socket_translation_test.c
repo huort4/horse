@@ -36,7 +36,7 @@ static word_t alloc_mem(Tracee *t, size_t size)
 static int translate_path(Tracee *t, char *out, int fd, const char *in, bool dereference)
 { (void)t; (void)fd; (void)in; (void)dereference; strcpy(out, host_path_fixture); return 0; }
 static int detranslate_path(Tracee *t, char *out, void *binding)
-{ (void)t; (void)binding; strcpy(out, "/tmp/claude-messaging-61001/12264.sock"); return 0; }
+{ (void)t; (void)binding; strcpy(out, "/tmp/horus-session-61001/12264.sock"); return 0; }
 static char *create_temp_name(void *ctx, const char *prefix)
 { (void)ctx; (void)prefix; return strdup(temp_path_fixture); }
 static Binding *insort_binding3(Tracee *t, void *ctx, const char *host, const char *guest)
@@ -54,7 +54,7 @@ static void test_bind_connect(const char *host)
 {
   Tracee tracee = {0};
   struct sockaddr_un guest = {.sun_family = AF_UNIX};
-  strcpy(guest.sun_path, "/tmp/claude-messaging-61001/12264.sock");
+  strcpy(guest.sun_path, "/tmp/horus-session-61001/12264.sock");
   host_path_fixture = host;
   word_t address = (word_t)&guest;
   int length = translate_socketcall_enter(&tracee, &address,

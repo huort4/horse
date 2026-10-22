@@ -474,7 +474,7 @@ export class TerminalCellBuffer {
 
   /**
    * Combining characters are the only unbounded per-cell state that needs a
-   * post-write scan. Ordinary OpenCode redraws are ASCII/box-drawing output;
+   * post-write scan. Ordinary full-screen redraws are ASCII/box-drawing output;
    * avoid walking every cell for those writes while retaining a conservative
    * UTF-8 check for combining ranges (including sequences split at a boundary).
    */

@@ -134,17 +134,12 @@ function errorLabel(operation: TrustedSessionOperation | {kind: 'error'; errorCo
 }
 
 function toolchainInstallError(target: TerminalToolchainTarget): string {
-  if (target === 'github') return 'toolchain_github_install_failed';
-  if (target === 'claude') return 'toolchain_install_failed';
-  if (target === 'codex') return 'toolchain_codex_install_failed';
-  if (target === 'opencode') return 'toolchain_opencode_install_failed';
-  return 'toolchain_install_failed';
+  return target === 'github' ? 'toolchain_github_install_failed' : 'toolchain_install_failed';
 }
 
 /** A start that failed while the service provisioned the app, by its error code. */
 function startInstallFailureKind(errorCode: string): InstallFailureKind | undefined {
   if (errorCode === 'toolchain_network') return 'network';
-  if (errorCode === 'toolchain_node_version') return 'node_version';
   if (errorCode === 'toolchain_permissions') return 'permissions';
   if (errorCode.startsWith('toolchain_')) return 'unknown';
   return undefined;
@@ -212,7 +207,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
     setCellWidth(width);
     setCellWidthMeasured(true);
   }, []);
-  // A new session starts at the measured size: an app like Claude Code draws
+  // A new session starts at the measured size: a full-screen app draws
   // its header the moment it launches, and a later resize cannot redraw
   // lines that have already scrolled up. Starting waits for the terminal's
   // first layout, or a short timeout if it never comes.
@@ -234,7 +229,6 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const [keyboardVisible, setKeyboardVisible] = React.useState(Keyboard.isVisible());
   const keyboardVisibleRef = React.useRef(keyboardVisible);
   const lastExpandedViewportRef = React.useRef<TerminalViewport | undefined>(undefined);
-  const [transcriptPagerOpen, setTranscriptPagerOpen] = React.useState(false);
   const size = terminalSize(
     viewport.height > 0 ? viewport.height / TERMINAL_CELL_HEIGHT : TERMINAL_SESSION_DEFAULT_ROWS,
     viewport.width > 0 ? viewport.width / cellWidth : TERMINAL_SESSION_DEFAULT_COLUMNS,
@@ -309,10 +303,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   // wait for a completion marker, and the GitHub login flow, keep the JS path
   // because they scan output in JS.
   const nativeHarness = Platform.OS === 'android' && !Platform.isTesting &&
-    (toolchain === 'claude' || toolchain === 'codex' || toolchain === 'opencode' ||
-      (toolchain === 'shell' && completionMarker === undefined));
+    toolchain === 'shell' && completionMarker === undefined;
   const nativeTerminalInput = Platform.OS === 'android' && !Platform.isTesting;
-  const nativeOpenCode = nativeHarness && toolchain === 'opencode';
 
   viewportRef.current = viewport;
 
@@ -930,14 +922,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   }, [altActive, clearKeyboardInput, ctrlActive, releaseModifiers, write]);
 
   const sendEscape = React.useCallback(() => {
-    if (toolchain === 'codex' && transcriptPagerOpen) {
-      clearKeyboardInput();
-      setTranscriptPagerOpen(false);
-      void write('\u001b');
-      return;
-    }
     sendTerminalKey('\u001b');
-  }, [clearKeyboardInput, sendTerminalKey, toolchain, transcriptPagerOpen, write]);
+  }, [sendTerminalKey]);
 
   const sendArrow = React.useCallback((direction: TerminalArrow) => {
     clearKeyboardInput();
@@ -986,21 +972,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   }, [installFailure, readRuntimeStatus, toolchain]);
 
   const sendPageKey = React.useCallback((direction: 'up' | 'down') => {
-    const sequence = direction === 'up' ? '\u001b[5~' : '\u001b[6~';
-    if (toolchain === 'codex' && direction === 'up' && !transcriptPagerOpen) {
-      setTranscriptPagerOpen(true);
-      void (async () => {
-        await write('\u0014');
-        await write(sequence);
-      })();
-      return;
-    }
-    void write(sequence);
-  }, [toolchain, transcriptPagerOpen, write]);
-
-  const toggleCodexTranscriptPager = React.useCallback(() => {
-    setTranscriptPagerOpen(open => !open);
-    void write('\u0014');
+    void write(direction === 'up' ? '\u001b[5~' : '\u001b[6~');
   }, [write]);
 
   const handleOutputSwipe = React.useCallback((direction: 'up' | 'down') => {
@@ -1051,11 +1023,11 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
       ? undefined
       : terminalSize(expandedViewport.height / TERMINAL_CELL_HEIGHT, size.columns).rows;
     // The Android IME changes the React viewport height, but it should not
-    // resize the PTY/native parser. A SIGWINCH here makes Codex/Claude redraw
+    // resize the PTY/native parser. A SIGWINCH here makes full-screen apps redraw
     // their whole screen and causes the visible prompt to jump to the top.
     // A shell has no full-screen redraw to protect: resize it like a desktop
     // terminal so the prompt stays above the keyboard. Neither does a
-    // full-screen (alternate-screen) app like Codex: it redraws cleanly and
+    // full-screen (alternate-screen) app: it redraws cleanly and
     // fits its header and composer into the space above the keyboard.
     if (nativeHarness && toolchain !== 'shell' && !nativeScreen.alternate && expandedRows !== undefined && size.columns === requested?.columns && size.rows < expandedRows) return;
     const nextSize = {rows: size.rows, columns: size.columns};
@@ -1080,15 +1052,14 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   }, [client, nativeHarness, nativeScreen.alternate, size.rows, size.columns, state, toolchain]);
 
   const startupOverlay = (state === 'starting' || state === 'running') && toolchain !== 'shell' &&
-    (nativeOpenCode || (nativeSessionId !== undefined && !nativeHarnessReady) || (installReadyRef.current && !harnessFrameReady && frame?.alternate === true))
+    ((nativeSessionId !== undefined && !nativeHarnessReady) || (installReadyRef.current && !harnessFrameReady && frame?.alternate === true))
     ? `Starting ${toolchainInstallLabel(toolchain)}…`
     : undefined;
   // An install stage on the wire means first-run provisioning is running:
   // show the step-by-step screen instead of the apk transcript until the app
   // paints. A failed stage hands the screen back to the log and its error.
-  // A native session draws its own frame. OpenCode counts as painted once
-  // its full-screen (alternate) view has text; the others at any text.
-  const nativePainted = nativeScreen.hasContent && (!nativeOpenCode || nativeScreen.alternate);
+  // A native session draws its own frame; it has painted once it has text.
+  const nativePainted = nativeScreen.hasContent;
   const appStarting = startupOverlay !== undefined && (nativeSessionId === undefined || !nativePainted);
   const installFailed = installStage?.endsWith('_failed') === true;
   const installActive = installStage !== undefined && !installFailed &&
@@ -1241,10 +1212,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             onTerminalKey={sendTerminalKey}
             onToggleAlt={toggleAlt}
             onToggleCtrl={toggleCtrl}
-            onToggleTranscriptPager={toggleCodexTranscriptPager}
             running={running}
-            toolchain={toolchain}
-            transcriptPagerOpen={transcriptPagerOpen}
           />}
         </KeyboardAvoidingView>
       </View>

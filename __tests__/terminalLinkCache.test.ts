@@ -28,7 +28,7 @@ test('reuses identical link arrays when an unchanged frame is rescanned', () => 
   const lines = [
     makeRow('open https://github.com/login/device now', false),
     makeRow('no links here', false),
-    makeRow('sign in at https://claude.ai/oauth', false),
+    makeRow('sign in at https://sample.io/oauth', false),
     makeRow('/authorize to continue', true),
   ];
   const first = positionTerminalLinks(makeFrame(lines), cache);
@@ -40,21 +40,21 @@ test('reuses identical link arrays when an unchanged frame is rescanned', () => 
     {url: 'https://github.com/login/device', startIndex: 5, endIndex: 36, startColumn: 5, endColumn: 36},
   ]);
   expect(first.get(2)).toEqual([
-    {url: 'https://claude.ai/oauth/authorize', startIndex: 11, endIndex: 44, startColumn: 11, endColumn: 34},
+    {url: 'https://sample.io/oauth/authorize', startIndex: 11, endIndex: 44, startColumn: 11, endColumn: 34},
   ]);
   expect(first.get(3)).toEqual([
-    {url: 'https://claude.ai/oauth/authorize', startIndex: 11, endIndex: 44, startColumn: 0, endColumn: 10},
+    {url: 'https://sample.io/oauth/authorize', startIndex: 11, endIndex: 44, startColumn: 0, endColumn: 10},
   ]);
 });
 
 test('rescans only the wrapped group whose member row object was replaced', () => {
   const cache: TerminalLinkScanCache = new WeakMap();
-  const stable = makeRow('see https://opencode.ai/docs today', false);
+  const stable = makeRow('see https://example.com/docs today', false);
   const head = makeRow('track https://github.com/octocat/H', false);
   const tail = makeRow('ello-World for details', true);
   const before = positionTerminalLinks(makeFrame([stable, head, tail]), cache);
   expect(before.get(0)).toEqual([
-    {url: 'https://opencode.ai/docs', startIndex: 4, endIndex: 28, startColumn: 4, endColumn: 28},
+    {url: 'https://example.com/docs', startIndex: 4, endIndex: 28, startColumn: 4, endColumn: 28},
   ]);
   expect(before.get(2)).toEqual([
     {url: 'https://github.com/octocat/Hello-World', startIndex: 6, endIndex: 44, startColumn: 0, endColumn: 10},
@@ -85,11 +85,11 @@ test('does not reuse the continuation row links after the group head is rewritte
     {url: 'https://github.com/octocat/Hello-World.git', startIndex: 5, endIndex: 47, startColumn: 0, endColumn: 14},
   ]);
 
-  const rewrittenHead = makeRow('push https://opencode.ai/docs x', false);
+  const rewrittenHead = makeRow('push https://example.com/docs x', false);
   const after = positionTerminalLinks(makeFrame([rewrittenHead, tail]), cache);
   expect(after.get(0)).not.toBe(before.get(0));
   expect(after.get(0)).toEqual([
-    {url: 'https://opencode.ai/docs', startIndex: 5, endIndex: 29, startColumn: 5, endColumn: 29},
+    {url: 'https://example.com/docs', startIndex: 5, endIndex: 29, startColumn: 5, endColumn: 29},
   ]);
   expect(after.has(1)).toBe(false);
   expect(after).toEqual(positionTerminalLinks(makeFrame([rewrittenHead, tail]), new WeakMap()));
@@ -97,15 +97,15 @@ test('does not reuse the continuation row links after the group head is rewritte
 
 test('rescans when group boundaries change and when a group grows back', () => {
   const cache: TerminalLinkScanCache = new WeakMap();
-  const head = makeRow('visit https://claude.ai/oauth', false);
+  const head = makeRow('visit https://sample.io/oauth', false);
   const tail = makeRow('/authorize here', true);
 
   const wrapped = positionTerminalLinks(makeFrame([head, tail]), cache);
   expect(wrapped.get(0)).toEqual([
-    {url: 'https://claude.ai/oauth/authorize', startIndex: 6, endIndex: 39, startColumn: 6, endColumn: 29},
+    {url: 'https://sample.io/oauth/authorize', startIndex: 6, endIndex: 39, startColumn: 6, endColumn: 29},
   ]);
   expect(wrapped.get(1)).toEqual([
-    {url: 'https://claude.ai/oauth/authorize', startIndex: 6, endIndex: 39, startColumn: 0, endColumn: 10},
+    {url: 'https://sample.io/oauth/authorize', startIndex: 6, endIndex: 39, startColumn: 0, endColumn: 10},
   ]);
 
   // Same text, but no longer a wrapped continuation: the row now forms its own
@@ -114,7 +114,7 @@ test('rescans when group boundaries change and when a group grows back', () => {
   const split = positionTerminalLinks(makeFrame([head, splitTail]), cache);
   expect(split.get(0)).not.toBe(wrapped.get(0));
   expect(split.get(0)).toEqual([
-    {url: 'https://claude.ai/oauth', startIndex: 6, endIndex: 29, startColumn: 6, endColumn: 29},
+    {url: 'https://sample.io/oauth', startIndex: 6, endIndex: 29, startColumn: 6, endColumn: 29},
   ]);
   expect(split.has(1)).toBe(false);
   expect(split).toEqual(positionTerminalLinks(makeFrame([head, splitTail]), new WeakMap()));
@@ -124,10 +124,10 @@ test('rescans when group boundaries change and when a group grows back', () => {
   const grown = positionTerminalLinks(makeFrame([head, grownTail]), cache);
   expect(grown.get(0)).not.toBe(split.get(0));
   expect(grown.get(0)).toEqual([
-    {url: 'https://claude.ai/oauth/authorize/again', startIndex: 6, endIndex: 45, startColumn: 6, endColumn: 29},
+    {url: 'https://sample.io/oauth/authorize/again', startIndex: 6, endIndex: 45, startColumn: 6, endColumn: 29},
   ]);
   expect(grown.get(1)).toEqual([
-    {url: 'https://claude.ai/oauth/authorize/again', startIndex: 6, endIndex: 45, startColumn: 0, endColumn: 16},
+    {url: 'https://sample.io/oauth/authorize/again', startIndex: 6, endIndex: 45, startColumn: 0, endColumn: 16},
   ]);
   expect(grown).toEqual(positionTerminalLinks(makeFrame([head, grownTail]), new WeakMap()));
 });
@@ -155,9 +155,9 @@ test('warmed cache output matches a cold scan across a frame sequence', () => {
   const cache: TerminalLinkScanCache = new WeakMap();
   const r0 = makeRow('alpha https://github.com/one/a', false);
   const r1 = makeRow('plain row', false);
-  const r2 = makeRow('beta https://claude.ai/x', false);
+  const r2 = makeRow('beta https://sample.io/x', false);
   const r3 = makeRow('/y tail', true);
-  const r2b = makeRow('beta https://claude.ai/zz', false);
+  const r2b = makeRow('beta https://sample.io/zz', false);
   const r3b = makeRow('/zzz tail2', true);
   const r0c = makeRow('alpha https://github.com/one/changed', false);
   const sequence: readonly (readonly TerminalRow[])[] = [

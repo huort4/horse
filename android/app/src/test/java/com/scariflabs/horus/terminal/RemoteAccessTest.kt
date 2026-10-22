@@ -180,12 +180,8 @@ class RemoteAccessTest {
         prootVersion = "5.4.0",
       )
 
-      val codexHome = File(base, "harness-homes/codex").apply { mkdirs() }
       val launch = ProotSessionLauncher(runtime, File(base, "scratch"), hostProc, hostDev)
-        .remoteAccessLaunchSpec(
-          rootfs, home, workspace, "horus",
-          harnessHomes = listOf(ProotSessionLauncher.HarnessHome(TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX, "harness_codex", codexHome)),
-        )
+        .remoteAccessLaunchSpec(rootfs, home, workspace, "horus")
 
       assertTrue(launch.argv.contains("-0"))
       val binds = launch.argv.windowed(2).filter { it[0] == "-b" }.map { it[1] }
@@ -197,7 +193,7 @@ class RemoteAccessTest {
       val script = launch.argv[launch.argv.indexOf("horus-remote-access") - 1]
       assertTrue(script.contains(ProotSessionLauncher.DOTNET_ENV_SCRIPT))
       assertTrue(script.contains(ProotSessionLauncher.ZSH_EXIT_SCRIPT))
-      for (terminator in listOf("HORUS_SHELL", "HORUS_INSTALLER", "HORUS_ZSH")) {
+      for (terminator in listOf("HORUS_SHELL", "HORUS_ZSH")) {
         assertEquals("$terminator must terminate its heredoc at column zero", 1, script.lines().count { it == terminator })
         assertFalse(script.lines().any { it.trim() == terminator && it != terminator })
       }
@@ -207,19 +203,8 @@ class RemoteAccessTest {
       assertTrue(script.contains("-p \"127.0.0.1:"))
       assertTrue(script.contains("dropbear -F -E -s -w "))
       assertTrue(script.contains("busybox su -s /bin/sh -c"))
-      // SSH runs the app's own harness installs, in their homes.
-      assertTrue(binds.contains("${codexHome.canonicalPath}:/home/harness_codex"))
-      assertEquals("codex=/home/harness_codex\n", File(rootfs, ProotSessionLauncher.GUEST_AGENT_HOMES_PATH.trimStart('/')).readText())
-      assertTrue(script.contains(ProotSessionLauncher.GUEST_AGENT_HOMES_PATH))
-      assertTrue(script.contains("exec \"${'$'}app_home/.local/bin/${'$'}tool\""))
-      // Debian's zsh is pointed at the zshrc.d snippets (the Claude wrapper).
+      // Debian's zsh is pointed at the zshrc.d snippets.
       assertTrue(script.contains("/etc/zsh/zshrc.d/*.zsh(N)"))
-      assertThrows(IllegalArgumentException::class.java) {
-        ProotSessionLauncher(runtime, File(base, "scratch"), hostProc, hostDev).remoteAccessLaunchSpec(
-          rootfs, home, workspace, "horus",
-          harnessHomes = listOf(ProotSessionLauncher.HarnessHome("shell", "harness_shell", codexHome)),
-        )
-      }
       assertThrows(IllegalArgumentException::class.java) {
         ProotSessionLauncher(runtime, File(base, "scratch"), hostProc, hostDev)
           .remoteAccessLaunchSpec(rootfs, home, workspace, ProotSessionLauncher.GUEST_ROOT_USER)

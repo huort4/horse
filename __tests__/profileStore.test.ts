@@ -121,7 +121,7 @@ describe('saveUserProfile', () => {
 describe('usernameProblem', () => {
   it('matches the native username rules', () => {
     for (const name of ['vishesh', 'horus', 'dev_1', '_x', 'a-b']) expect(usernameProblem(name)).toBeUndefined();
-    for (const name of ['', 'Vishesh', '1abc', 'root', 'nobody', 'harness_claude', 'a b', 'x'.repeat(33)]) {
+    for (const name of ['', 'Vishesh', '1abc', 'root', 'nobody', 'a b', 'x'.repeat(33)]) {
       expect(usernameProblem(name)).toBeDefined();
     }
   });

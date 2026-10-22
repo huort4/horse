@@ -1,10 +1,9 @@
 import React from 'react';
-import {HARNESS_LOGO_SOURCES, type HarnessLogo} from '../terminal/harnessLogos';
 import {AppState, BackHandler, Image, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {UI_FONT_FAMILY} from './typography';
 import {readDeviceSnapshot, type DeviceSnapshot} from '../device/deviceSnapshot';
 import type {GithubAccount} from '../projects/githubRepositories';
-import {buildZshCommand, buildZshScriptCommand} from '../terminal/commandFactory';
+import {buildZshCommand} from '../terminal/commandFactory';
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import type {ActiveTerminalSession} from '../terminal/session/sessionContract';
 import {formatSessionAge, sessionTitle} from '../terminal/toolchainLabels';
@@ -19,6 +18,8 @@ export type MetroLaunchTarget = Readonly<{
   eyebrow: string;
   command?: string;
   toolchain?: TerminalToolchainTarget;
+  /** Opens the project folder chooser, then a shell in the chosen folder. */
+  opensProjects?: boolean;
   kind?: 'terminal' | 'files';
   returnTo?: 'home' | 'projects';
   sessionId?: string;
@@ -48,8 +49,6 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / 1024)} KB`;
 }
 
-const harnessLogoSources = HARNESS_LOGO_SOURCES;
-
 function StatTile({label, value, detail, divided}: {label: string; value: string; detail: string; divided: boolean}): React.JSX.Element {
   return (
     <View style={[styles.statTile, divided && styles.statDivider]}>
@@ -61,20 +60,17 @@ function StatTile({label, value, detail, divided}: {label: string; value: string
 }
 
 type AppTileProps = Readonly<{
+  icon: string;
   title: string;
   detail?: string;
+  testID: string;
   onPress: () => void;
-}> & (
-  | Readonly<{icon: string; logo?: never}>
-  | Readonly<{logo: HarnessLogo; icon?: never}>
-);
+}>;
 
-function AppTile({icon, logo, title, detail, onPress}: AppTileProps): React.JSX.Element {
+function AppTile({icon, title, detail, testID, onPress}: AppTileProps): React.JSX.Element {
   return (
-    <Pressable accessibilityLabel={detail === undefined ? title : `${title}, ${detail}`} accessibilityRole="button" onPress={onPress} style={styles.appTile} testID={logo === undefined ? 'metro-harness-shell' : `metro-harness-${logo}`}>
-      {logo === undefined
-        ? <Text accessibilityElementsHidden style={styles.appIcon}>{icon}</Text>
-        : <Image source={harnessLogoSources[logo]} resizeMode="contain" style={[styles.appLogo, logo === 'codex' && styles.codexLogo]} />}
+    <Pressable accessibilityLabel={detail === undefined ? title : `${title}, ${detail}`} accessibilityRole="button" onPress={onPress} style={styles.appTile} testID={testID}>
+      <Text accessibilityElementsHidden style={styles.appIcon}>{icon}</Text>
       <Text numberOfLines={1} style={styles.appTitle}>{title}</Text>
       {detail === undefined ? null : <Text numberOfLines={1} style={styles.appDetail}>{detail}</Text>}
     </Pressable>
@@ -261,19 +257,15 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, 
             <StatTile label="BATTERY" value={snapshot === null ? '—' : `${Math.round(snapshot.batteryPercent)}%`} detail="device power" divided={false} />
           </View>
 
-          <View testID="metro-harnesses">
+          <View testID="metro-sessions">
             <Text style={styles.sectionLabel}>OPEN A SESSION</Text>
             <View style={styles.toolRow}>
-              <AppTile logo="claude" title="Claude Code" onPress={() => onOpen({title: 'Claude Code', eyebrow: 'AI WORKBENCH', command: buildZshCommand('claude'), toolchain: 'claude'})} />
-              <AppTile logo="codex" title="Codex" onPress={() => onOpen({title: 'Codex', eyebrow: 'AI WORKBENCH', command: buildZshCommand('codex'), toolchain: 'codex'})} />
-            </View>
-            <View style={styles.toolRow}>
-              <AppTile logo="opencode" title="OpenCode" onPress={() => onOpen({title: 'OpenCode', eyebrow: 'AI WORKBENCH', command: buildZshScriptCommand('opencode'), toolchain: 'opencode'})} />
-              <AppTile icon=">_" title="Bare terminal" onPress={() => onOpen({title: 'Bare terminal', eyebrow: 'SHELL', command: buildZshCommand('mkdir -p /workspace/projects && cd /workspace/projects && exec zsh -l'), toolchain: 'shell'})} />
+              <AppTile icon=">_" testID="metro-app-shell" title="Bare terminal" onPress={() => onOpen({title: 'Bare terminal', eyebrow: 'SHELL', command: buildZshCommand('mkdir -p /workspace/projects && cd /workspace/projects && exec zsh -l'), toolchain: 'shell'})} />
+              <AppTile icon="📁" testID="metro-app-projects" title="Projects" onPress={() => onOpen({title: 'Bare terminal', eyebrow: 'PROJECTS', opensProjects: true, toolchain: 'shell'})} />
             </View>
 
             <View style={styles.toolRow}>
-              <AppTile icon="🌐" title="Remote Access" onPress={() => {
+              <AppTile icon="🌐" testID="metro-app-remote-access" title="Remote Access" onPress={() => {
                 // Directly route to websocket
                 if (typeof onOpen === 'function') {
                   // Use a special target that routes to websocket
@@ -463,8 +455,6 @@ const styles = StyleSheet.create({
   toolRow: {flexDirection: 'row', gap: 8, marginTop: 0, marginBottom: 8},
   appTile: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 104, padding: 10},
   appIcon: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 34, fontWeight: '700', height: 42, lineHeight: 42, textAlign: 'center'},
-  appLogo: {height: 42, width: 42},
-  codexLogo: {tintColor: uiColors.ink},
   appTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '400', marginTop: 7},
   appDetail: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 9, marginTop: 4},
   filesTile: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, flexDirection: 'row', marginTop: 1, minHeight: 76, paddingHorizontal: 13},

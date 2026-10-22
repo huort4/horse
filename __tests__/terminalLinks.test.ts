@@ -12,10 +12,10 @@ describe('terminal links', () => {
     'https://github.com/login/device',
     'https://api.github.com/repos',
     'https://console.anthropic.com',
-    'https://claude.ai/oauth/authorize',
+    'https://sample.io/oauth/authorize',
     'https://auth.openai.com',
     'https://chatgpt.com',
-    'https://opencode.ai',
+    'https://example.com',
     'http://localhost:5173',
     'http://127.0.0.1:3000',
     'http://[::1]:3000',
@@ -38,9 +38,9 @@ describe('terminal links', () => {
   });
 
   test('finds trusted row links and removes prose punctuation', () => {
-    expect(findTrustedTerminalLinks('Login: https://claude.ai/oauth/authorize?code=abc).')).toEqual([
+    expect(findTrustedTerminalLinks('Login: https://sample.io/oauth/authorize?code=abc).')).toEqual([
       {
-        url: 'https://claude.ai/oauth/authorize?code=abc',
+        url: 'https://sample.io/oauth/authorize?code=abc',
         startIndex: 7,
         endIndex: 49,
       },

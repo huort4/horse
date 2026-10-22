@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Native terminal state used by interactive harness surfaces.
+ * Native terminal state used by interactive terminal surfaces.
  *
  * The service still owns the PTY. Ordered output arrives in the RN process
  * through the existing Messenger boundary, but it stops at this bounded
@@ -437,7 +437,7 @@ internal class NativeTerminalEngine(
   private var utf8Tail = ByteArray(0)
   private val listeners = CopyOnWriteArrayList<() -> Unit>()
   @Volatile private var publishedFrame: Frame = buildFrame()
-  private val parserThread = Thread({ parseLoop() }, "opencode-native-terminal").apply { isDaemon = true }
+  private val parserThread = Thread({ parseLoop() }, "horus-native-terminal").apply { isDaemon = true }
   @Volatile private var requestedRows = rows.coerceIn(2, 250)
   @Volatile private var requestedColumns = columns.coerceIn(2, 500)
 

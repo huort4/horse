@@ -107,14 +107,14 @@ class DistroStoreCoreTest {
     val rootfs = store.activeRootfsDir()!!
     val rootOnly = emulatedLink(store, "root", File(rootfs, "bin/package"))
     val shared = emulatedLink(store, "shared", File(rootfs, "bin/shared"), File(store.storage.home, "shared"), File(store.storage.defaultWorkspace, "shared"))
-    val harness = emulatedLink(store, "harness", File(store.storage.harnessHome("codex"), "shared"))
+    val userHome = emulatedLink(store, "userhome", File(store.storage.home, "shared"))
     val tmp = emulatedLink(store, "tmp", File(store.storage.guestTmp, "survivor"))
     val unknown = File(store.storage.hardlinks, "user-file").apply { writeText("keep") }
     store.reset()
     assertFalse(rootOnly.first.exists()); assertFalse(rootOnly.second.exists())
     assertEquals("data:shared", File(store.storage.home, "shared").readText())
     store.reset(deleteHome = true)
-    assertFalse(harness.second.exists()); assertTrue(shared.second.exists())
+    assertFalse(userHome.second.exists()); assertTrue(shared.second.exists())
     assertEquals("data:shared", File(store.storage.defaultWorkspace, "shared").readText())
     store.reset(deleteHome = true, deleteWorkspaces = true)
     assertFalse(shared.first.exists()); assertFalse(shared.second.exists())
@@ -466,8 +466,6 @@ class DistroStoreCoreTest {
     val paths = store.storage
     assertEquals(paths.home, paths.homeFor(RootfsCatalog.DISTRO_ALPINE))
     assertEquals(File(paths.base, "homes/debian/home"), paths.homeFor(RootfsCatalog.DISTRO_DEBIAN))
-    assertEquals(paths.harnessHome("claude"), paths.harnessHomeFor(RootfsCatalog.DISTRO_ALPINE, "claude"))
-    assertEquals(File(paths.base, "homes/debian/harness-homes/claude"), paths.harnessHomeFor(RootfsCatalog.DISTRO_DEBIAN, "claude"))
 
     store.install(entry = RootfsCatalog.DEBIAN, expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
     // The probe ran against Debian's home, which now exists.
@@ -498,10 +496,6 @@ class DistroStoreCoreTest {
       parentFile!!.mkdirs()
       writeText("user data")
     }
-    val harnessCredential = File(store.storage.harnessHome(TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX), "auth.json").apply {
-      parentFile!!.mkdirs()
-      writeText("harness data")
-    }
     val workspaceSentinel = File(store.storage.defaultWorkspace, "repo.txt").apply {
       parentFile!!.mkdirs()
       writeText("workspace data")
@@ -514,23 +508,14 @@ class DistroStoreCoreTest {
     assertNull(store.readActiveRecord())
     assertTrue(store.installedVersionIds().isEmpty())
     assertEquals("user data", homeSentinel.readText())
-    assertEquals("harness data", harnessCredential.readText())
     assertEquals("workspace data", workspaceSentinel.readText())
 
     val userReset = store.reset(deleteHome = true, deleteWorkspaces = true)
     assertTrue(userReset.homeRemoved)
     assertTrue(userReset.workspacesRemoved)
     assertFalse(homeSentinel.exists())
-    assertFalse(harnessCredential.exists())
     assertFalse(workspaceSentinel.exists())
     assertTrue(store.storage.home.isDirectory)
-    for (harness in listOf(
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
-    )) {
-      assertTrue(store.storage.harnessHome(harness).isDirectory)
-    }
   }
 
   @Test
@@ -550,7 +535,6 @@ class DistroStoreCoreTest {
     assertFalse(homeReset.workspacesRemoved)
     assertFalse(homeSentinel.exists())
     assertEquals("workspace", workspaceSentinel.readText())
-    assertTrue(store.storage.harnessHome(TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE).isDirectory)
 
     val workspaceReset = store.reset(deleteWorkspaces = true)
     assertFalse(workspaceReset.homeRemoved)

@@ -580,7 +580,7 @@ class TerminalSessionSupervisorTest {
     assertTrue(
       harness.supervisor.start("s-github", spec(countsAgainstSessionLimit = false)) is TerminalSessionSupervisor.StartOutcome.Success,
     )
-    val secondUserSession = harness.supervisor.start("s-codex", spec())
+    val secondUserSession = harness.supervisor.start("s-second", spec())
     assertEquals("session_limit_reached", (secondUserSession as TerminalSessionSupervisor.StartOutcome.Failure).reasonCode)
     harness.supervisor.stop("s-shell", "user_stop")
     harness.supervisor.stop("s-github", "user_stop")

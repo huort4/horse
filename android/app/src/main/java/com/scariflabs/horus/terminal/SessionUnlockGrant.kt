@@ -3,7 +3,7 @@ package com.scariflabs.horus.terminal
 /**
  * Remembers, in the terminal service's memory only, that the user unlocked
  * Horus. Android can reclaim the UI process on low-memory devices while the
- * `:terminal` service keeps the user's harness running; a recreated UI asks
+ * `:terminal` service keeps the user's sessions running; a recreated UI asks
  * here instead of demanding the password again. Nothing is persisted: if the
  * service process dies too, the grant is gone and the next launch locks.
  *

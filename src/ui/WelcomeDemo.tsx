@@ -1,20 +1,18 @@
 import React from 'react';
 import {AccessibilityInfo, StyleSheet, Text, View} from 'react-native';
-import {HarnessMark} from '../terminal/harnessLogos';
 import {uiColors} from './brand';
 import {UI_FONT_FAMILY} from './typography';
 
 type DemoScene = Readonly<{
-  toolchain: 'claude' | 'codex' | 'opencode';
-  name: string;
+  title: string;
   prompt: string;
   lines: readonly string[];
 }>;
 
 const SCENES: readonly DemoScene[] = [
-  {toolchain: 'claude', name: 'Claude Code', prompt: 'fix the failing login test', lines: ['● Read src/auth.ts', '● Edit src/auth.ts  +4 −1', '✓ 12 tests passed']},
-  {toolchain: 'codex', name: 'Codex', prompt: 'add dark mode to settings', lines: ['• Searched for theme', '• Updated 3 files', '✓ Build succeeded']},
-  {toolchain: 'opencode', name: 'OpenCode', prompt: 'explain this repo', lines: ['• Read README.md', '• Mapped 48 files', '✓ Here’s the overview']},
+  {title: '~/projects', prompt: 'gh repo clone scarif-labs/horus', lines: ['Cloning into "horus"...', '✓ Repository cloned', '→ 48 files, 2 branches']},
+  {title: '~/projects/horus', prompt: 'npm test', lines: ['PASS  __tests__/terminalLinks.test.ts', 'TESTS  377 passed', '✓ Build succeeded']},
+  {title: '~/projects/horus', prompt: 'python3 train.py', lines: ['epoch 9/10  loss 0.018', '✓ 97.97% accuracy', '→ model saved to ./model.pt']},
 ];
 
 const TYPE_MS = 45;
@@ -30,7 +28,7 @@ function nextState({scene, typed, lines}: DemoState): [DemoState, number] {
   return [{scene: (scene + 1) % SCENES.length, typed: 0, lines: 0}, HOLD_MS];
 }
 
-/** A small terminal that types a task to each agent in turn. */
+/** A small terminal that types a command and prints its output. */
 export function WelcomeDemo(): React.JSX.Element {
   const [state, setState] = React.useState<DemoState>({scene: 0, typed: 0, lines: 0});
   const [reduceMotion, setReduceMotion] = React.useState(false);
@@ -54,7 +52,7 @@ export function WelcomeDemo(): React.JSX.Element {
   const typing = typed < scene.prompt.length || lines === 0;
 
   return (
-    <View accessible accessibilityLabel="Horus runs Claude Code, Codex and OpenCode in a terminal on your phone" testID="welcome-demo">
+    <View accessible accessibilityLabel="A Linux terminal running on your phone" testID="welcome-demo">
       <View style={styles.window}>
         <View style={styles.titleBar}>
           <View style={styles.lights}>
@@ -62,11 +60,11 @@ export function WelcomeDemo(): React.JSX.Element {
             <View style={[styles.light, styles.lightAmber]} />
             <View style={[styles.light, styles.lightGreen]} />
           </View>
-          <Text style={styles.titleText}>{scene.name.toLowerCase()} · ~/app</Text>
+          <Text style={styles.titleText}>{scene.title}</Text>
         </View>
         <View style={styles.body}>
           <Text style={styles.prompt}>
-            <Text style={styles.chevron}>{'> '}</Text>
+            <Text style={styles.chevron}>{'$ '}</Text>
             {scene.prompt.slice(0, typed)}
             {typing ? <Text style={styles.cursor}>▌</Text> : null}
           </Text>
@@ -74,14 +72,6 @@ export function WelcomeDemo(): React.JSX.Element {
             <Text key={line} style={[styles.line, line.startsWith('✓') && styles.lineDone, index >= lines && styles.hidden]}>{line}</Text>
           ))}
         </View>
-      </View>
-      <View style={styles.agents}>
-        {SCENES.map((item, index) => (
-          <View key={item.toolchain} style={[styles.agent, index !== state.scene && styles.agentIdle]}>
-            <HarnessMark size={22} toolchain={item.toolchain} />
-            <Text style={[styles.agentName, index === state.scene && styles.agentNameActive]}>{item.name}</Text>
-          </View>
-        ))}
       </View>
     </View>
   );
@@ -95,7 +85,7 @@ const styles = StyleSheet.create({
   lightRed: {backgroundColor: '#FF5F57'},
   lightAmber: {backgroundColor: '#FEBC2E'},
   lightGreen: {backgroundColor: '#28C840'},
-  titleText: {color: uiColors.subdued, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 10, marginRight: 31, textAlign: 'center'},
+  titleText: {color: uiColors.subdued, flex: 1, fontFamily: UI_FONT_FAMILY, fontSize: 10, textAlign: 'center'},
   body: {minHeight: 118, paddingHorizontal: 14, paddingVertical: 12},
   prompt: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 12, lineHeight: 20},
   chevron: {color: uiColors.accent},
@@ -103,9 +93,4 @@ const styles = StyleSheet.create({
   line: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 11, lineHeight: 20},
   lineDone: {color: uiColors.accent},
   hidden: {opacity: 0},
-  agents: {flexDirection: 'row', justifyContent: 'space-between', marginTop: 14},
-  agent: {alignItems: 'center', flex: 1, gap: 6},
-  agentIdle: {opacity: 0.35},
-  agentName: {color: uiColors.muted, fontFamily: UI_FONT_FAMILY, fontSize: 10},
-  agentNameActive: {color: uiColors.ink},
 });

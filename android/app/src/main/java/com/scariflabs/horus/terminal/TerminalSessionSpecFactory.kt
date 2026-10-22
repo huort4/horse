@@ -81,12 +81,11 @@ class TerminalSessionSpecFactory(
     }
     val profileUsername = activeProfileUsername()
       ?: ProotSessionLauncher.GUEST_ROOT_USER
-    val harnessUser = TerminalHarnessUsers.forTarget(toolchainTarget, profileUsername)
-    val guestUsername = harnessUser?.username ?: profileUsername
-    val guestUid = harnessUser?.uid ?: ProotSessionLauncher.GUEST_UID
-    val guestGid = harnessUser?.gid ?: ProotSessionLauncher.GUEST_GID
+    val guestUsername = profileUsername
+    val guestUid = ProotSessionLauncher.GUEST_UID
+    val guestGid = ProotSessionLauncher.GUEST_GID
     val guestHomeDir = try {
-      activeGuestHome(harnessUser)
+      activeGuestHome()
     } catch (_: Exception) {
       return BuildOutcome.Failure("internal_error")
     }
@@ -120,9 +119,7 @@ class TerminalSessionSpecFactory(
           sessionCommand = sessionCommand,
           target = toolchainTarget,
           provision = !toolchainReady,
-          rootHelper = harnessUser == null,
-          // The user's own terminal runs the app's harnesses, like SSH does.
-          harnessHomes = if (harnessUser == null) existingHarnessHomes(profileUsername) else emptyList(),
+          rootHelper = true,
         )
       }
       BuildOutcome.Success(
@@ -166,9 +163,8 @@ class TerminalSessionSpecFactory(
     }
     val profileUsername = activeProfileUsername()
       ?: ProotSessionLauncher.GUEST_ROOT_USER
-    val harnessUser = TerminalHarnessUsers.forTarget(target, profileUsername)
     val guestHomeDir = try {
-      activeGuestHome(harnessUser)
+      activeGuestHome()
     } catch (_: Exception) {
       return ProvisionBuildOutcome.Failure("internal_error")
     }
@@ -226,21 +222,18 @@ class TerminalSessionSpecFactory(
         dnsServersProvider = ::activeDnsServers,
         downloadSources = downloadSourceSettings.read(),
       )
-      val guestHomeDir = activeGuestHome(null)
+      val guestHomeDir = activeGuestHome()
       // The active user's home may postdate the pairing; give it the paired keys.
       val remoteStore = RemoteAccess.Store(paths.base)
       remoteStore.syncKeysToHomes()
       // One host key for the phone, whichever user is active.
       val hostKeyDir = remoteStore.prepareHostKey(guestHomeDir)
-      // The app's harnesses, so SSH runs the same installs and logins.
-      val harnessHomes = existingHarnessHomes(profileUsername)
       RemoteAccessBuildOutcome.Success(
         launcher.remoteAccessLaunchSpec(
           rootfsDir = rootfsDir,
           guestHomeDir = guestHomeDir,
           workspaceDir = paths.defaultWorkspace,
           guestUsername = profileUsername,
-          harnessHomes = harnessHomes,
           hostKeyDir = hostKeyDir,
         ),
       )
@@ -263,20 +256,9 @@ class TerminalSessionSpecFactory(
   /** The Linux user of the active distribution. */
   fun activeProfileUsername(): String? = TerminalGuestIdentity.readStoredUsername(context, activeDistro())
 
-  /** The active distribution's home for [harnessUser], or its user home; created on first use. */
-  /** The harness homes the app has made in the active distribution so far. */
-  private fun existingHarnessHomes(profileUsername: String): List<ProotSessionLauncher.HarnessHome> {
-    val distro = activeDistro()
-    return AGENT_TARGETS.mapNotNull { target ->
-      val user = TerminalHarnessUsers.forTarget(target, profileUsername) ?: return@mapNotNull null
-      val home = paths.harnessHomeFor(distro, user.homeKey)
-      if (home.isDirectory) ProotSessionLauncher.HarnessHome(target, user.username, home) else null
-    }
-  }
-
-  private fun activeGuestHome(harnessUser: TerminalHarnessUser?): File {
-    val distro = activeDistro()
-    val home = harnessUser?.let { paths.harnessHomeFor(distro, it.homeKey) } ?: paths.homeFor(distro)
+  /** The active distribution's user home, created on first use. */
+  private fun activeGuestHome(): File {
+    val home = paths.homeFor(activeDistro())
     if (!home.isDirectory && !home.mkdirs()) throw IllegalStateException("guest home is unavailable")
     return home
   }
@@ -311,10 +293,5 @@ class TerminalSessionSpecFactory(
   private companion object {
     const val LOG_TAG = "HorusTerminal"
     const val MAX_ERROR_LOG_CHARS = 160
-    private val AGENT_TARGETS = listOf(
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
-    )
   }
 }

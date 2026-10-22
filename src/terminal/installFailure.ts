@@ -2,11 +2,11 @@ import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import {toolchainInstallLabel} from './toolchainLabels';
 
 /** Why a first-run install stopped, as far as Horus can tell. */
-export type InstallFailureKind = 'offline' | 'network' | 'storage' | 'permissions' | 'node_version' | 'packages' | 'unknown';
+export type InstallFailureKind = 'offline' | 'network' | 'storage' | 'permissions' | 'packages' | 'unknown';
 
 export type InstallFailure = Readonly<{
   kind: InstallFailureKind;
-  /** The last provisioning stage, e.g. `codex_failed`. */
+  /** The last provisioning stage, e.g. `github_failed`. */
   stage?: string;
   /** The end of the install log, cleaned for reading. */
   log?: string;
@@ -28,7 +28,6 @@ export function classifyInstallFailure(log: string, stage: string | undefined, o
   if (online === false) return 'offline';
   if (/ENOSPC|No space left on device/i.test(log)) return 'storage';
   if (NETWORK_PATTERN.test(log)) return 'network';
-  if (/EBADENGINE/i.test(log)) return 'node_version';
   if (/EACCES|permission denied/i.test(log)) return 'permissions';
   if (stage === 'apk_failed' || stage === 'github_failed') return 'packages';
   return 'unknown';
@@ -57,8 +56,7 @@ export type InstallFailureCopy = Readonly<{title: string; reason: string; advice
 export function installFailureCopy(failure: InstallFailure, toolchain: TerminalToolchainTarget): InstallFailureCopy {
   const label = toolchainInstallLabel(toolchain);
   const title = `Couldn’t install ${label}`;
-  // Claude Code always downloads from Anthropic; the others can use a mirror.
-  const mirror = toolchain === 'claude' ? '' : ' You can also pick another mirror in Settings › Downloads.';
+  const mirror = ' You can also pick another mirror in Settings › Downloads.';
   switch (failure.kind) {
     case 'offline':
       return {title, reason: 'Your phone is offline.', advice: `Horus downloads ${label} the first time you open it. Turn on Wi-Fi or mobile data, then try again.`};
@@ -68,8 +66,6 @@ export function installFailureCopy(failure: InstallFailure, toolchain: TerminalT
       return {title, reason: 'Your phone is out of storage.', advice: `Free up some space, then try again. ${label} needs a few hundred MB.`};
     case 'permissions':
       return {title, reason: 'Horus couldn’t write the files it needs.', advice: 'Try again. If it keeps failing, report it with the log below.'};
-    case 'node_version':
-      return {title, reason: `${label} needs a newer Node.js than this Linux has.`, advice: 'Report it with the log below so Horus can ship a compatible version.'};
     case 'packages':
       return {title, reason: 'The system packages didn’t install.', advice: 'This is usually the connection or the package mirror. Try again, or pick another mirror in Settings › Downloads.'};
     case 'unknown':
