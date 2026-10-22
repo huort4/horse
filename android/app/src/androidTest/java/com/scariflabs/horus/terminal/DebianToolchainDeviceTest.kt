@@ -75,9 +75,9 @@ class DebianToolchainDeviceTest {
         assertEquals("$target provisioning failed:\n${result.second.takeLast(3_000)}\n$logs", 0, result.first)
         assertTrue("$target is not ready after provisioning", launcher.hasProvisionedToolchain(rootfs, targetHome, target))
 
-        val user = if (targetHome == home) "vishesh" else TerminalHarnessUsers.forTarget(target, "vishesh")!!.username
-        val uid = if (targetHome == home) ProotSessionLauncher.GUEST_UID else TerminalHarnessUsers.forTarget(target, "vishesh")!!.uid
-        val gid = if (targetHome == home) ProotSessionLauncher.GUEST_GID else TerminalHarnessUsers.SHARED_WORKSPACE_GID
+        val user = "vishesh"
+        val uid = ProotSessionLauncher.GUEST_UID
+        val gid = ProotSessionLauncher.GUEST_GID
         val marker = "DEBIAN_${command.uppercase()}_OK"
         val session = launcher.toolchainSessionLaunchSpec(
           rootfsDir = rootfs,

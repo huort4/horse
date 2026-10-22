@@ -40,8 +40,6 @@ class ProotSessionLauncher(
   private val hardlinkDir: File = File(scratchDir.absoluteFile.parentFile, "l"),
 ) {
 
-  /** A harness's home, as the app's own sessions of that harness see it. */
-  data class HarnessHome(val target: String, val username: String, val hostDir: File)
 
   data class LaunchSpec(
     val argv: List<String>,
@@ -128,8 +126,6 @@ class ProotSessionLauncher(
      * user. Only the profile user's own sessions get it, never a harness's.
      */
     rootHelper: Boolean = false,
-    /** The app's harness homes, mounted for the profile user's own sessions. */
-    harnessHomes: List<HarnessHome> = emptyList(),
   ): LaunchSpec {
     require(TerminalRuntimeContract.isValidToolchainTarget(target)) { "toolchain target is invalid" }
     val command = sessionCommand ?: "exec zsh -l"
@@ -143,8 +139,6 @@ class ProotSessionLauncher(
     }
     val sessionWorkingDirectory = if (workspaceDir == null) guestHomePath else "/workspace"
     if (rootHelper) installRootHelper(rootfsDir)
-    requireHarnessHomes(harnessHomes, guestUsername)
-    if (harnessHomes.isNotEmpty()) installAgentHomes(rootfsDir, harnessHomes)
     val launch = buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
@@ -168,7 +162,6 @@ class ProotSessionLauncher(
       forceRootIdentity = true,
       // sudo runs commands on their own pseudo-terminal, as SSH logins do.
       extraDeviceBinds = if (rootHelper) ptyDeviceBinds() else emptyList(),
-      extraBinds = harnessHomes.map { it.hostDir to "/home/${it.username}" },
     )
     val environment = buildList {
       addAll(launch.environment)
@@ -192,7 +185,6 @@ class ProotSessionLauncher(
     guestUid: Int = GUEST_UID,
     guestGid: Int = GUEST_GID,
     port: Int = RemoteAccess.PORT,
-    harnessHomes: List<HarnessHome> = emptyList(),
     /** App-private directory holding the phone's one host key; null keeps it in the user's home. */
     hostKeyDir: File? = null,
   ): LaunchSpec {
@@ -201,9 +193,7 @@ class ProotSessionLauncher(
       "remote access host key directory is unavailable"
     }
     require(port in 1025..65535) { "remote access port is invalid" }
-    requireHarnessHomes(harnessHomes, guestUsername)
     installRootHelper(rootfsDir)
-    installAgentHomes(rootfsDir, harnessHomes)
     return buildLaunchSpec(
       rootfsDir = rootfsDir,
       guestHomeDir = guestHomeDir,
@@ -229,10 +219,7 @@ class ProotSessionLauncher(
       bindHomeAtRoot = false,
       // SSH logins allocate their own pseudo-terminals inside the guest.
       extraDeviceBinds = ptyDeviceBinds(),
-      // The app's harness homes, where its sessions see them, so `codex`
-      // and friends over SSH run the app's installs with its logins.
-      extraBinds = harnessHomes.map { it.hostDir to "/home/${it.username}" } +
-        listOfNotNull(hostKeyDir?.let { it to RemoteAccess.GUEST_HOST_KEY_DIR }),
+      extraBinds = listOfNotNull(hostKeyDir?.let { it to RemoteAccess.GUEST_HOST_KEY_DIR }),
     )
   }
 
@@ -283,36 +270,6 @@ class ProotSessionLauncher(
       throw IllegalStateException("cannot create proot hardlink directory")
     }
     prepareResolverFile(rootfsDir)
-    prepareCodexProfile(guestHomeDir)
-    when (toolchainTarget) {
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> prepareGlobalAgentInstructions(
-        guestHomeDir,
-        listOf(CODEX_CONFIG_DIRECTORY_NAME),
-        CODEX_AGENT_INSTRUCTIONS_NAME,
-        CODEX_AGENT_INSTRUCTIONS_BEGIN,
-        CODEX_AGENT_INSTRUCTIONS_END,
-        CODEX_AGENT_INSTRUCTIONS_BLOCK,
-        "Codex",
-      )
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> prepareGlobalAgentInstructions(
-        guestHomeDir,
-        listOf(CLAUDE_CONFIG_DIRECTORY_NAME),
-        CLAUDE_AGENT_INSTRUCTIONS_NAME,
-        CLAUDE_AGENT_INSTRUCTIONS_BEGIN,
-        CLAUDE_AGENT_INSTRUCTIONS_END,
-        CLAUDE_AGENT_INSTRUCTIONS_BLOCK,
-        "Claude Code",
-      )
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> prepareGlobalAgentInstructions(
-        guestHomeDir,
-        OPENCODE_CONFIG_DIRECTORY_PARTS,
-        OPENCODE_AGENT_INSTRUCTIONS_NAME,
-        OPENCODE_AGENT_INSTRUCTIONS_BEGIN,
-        OPENCODE_AGENT_INSTRUCTIONS_END,
-        OPENCODE_AGENT_INSTRUCTIONS_BLOCK,
-        "OpenCode",
-      )
-    }
     prepareZshProfile(guestHomeDir)
     val rootfsPath = rootfsDir.canonicalFile.absolutePath
     val homePath = guestHomeDir.canonicalFile.absolutePath
@@ -400,12 +357,6 @@ class ProotSessionLauncher(
       add("XDG_DATA_HOME=$launchHomePath/.local/share")
       add("XDG_CACHE_HOME=$launchHomePath/.cache")
       add("TERM=$term")
-      if (toolchainTarget == TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE) {
-        // Claude's fullscreen alternate buffer owns its own sparse viewport
-        // and bypasses terminal scrollback. Keep conversation output in the
-        // normal buffer so Horus can render and scroll the complete history.
-        add("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1")
-      }
       toolchainTarget?.let { add("HORUS_TOOLCHAIN_TARGET=$it") }
       // Do not shadow Alpine's real BusyBox applets: both `top` and
       // `/bin/busybox top` must reach the guest binary with their argv intact.
@@ -444,28 +395,7 @@ class ProotSessionLauncher(
     }
   }
 
-  /**
-   * Lists where the app's harness homes are mounted, for the `codex`,
-   * `claude`, and `opencode` commands outside the app's own harness sessions.
-   */
-  private fun installAgentHomes(rootfsDir: File, harnessHomes: List<HarnessHome>) {
-    val content = harnessHomes.joinToString("") { "${it.target}=/home/${it.username}\n" }
-    writeGuestFile(rootfsDir, GUEST_AGENT_HOMES_PATH, content.toByteArray(), executable = false)
-  }
-
-  private fun requireHarnessHomes(harnessHomes: List<HarnessHome>, guestUsername: String) {
-    harnessHomes.forEach { home ->
-      require(home.target in AGENT_STUB_TARGETS && USERNAME_PATTERN.matches(home.username) && home.username != guestUsername) {
-        "harness home is invalid"
-      }
-    }
-  }
-
-  /**
-   * Writes one file into the rootfs. The guest owns the rootfs, so a
-   * directory on the way may be a symlink planted there; never write through
-   * one, or the app could overwrite its own files.
-   */
+  /** Writes a file into the rootfs, refusing to follow symlinks on the way. */
   private fun writeGuestFile(rootfsDir: File, guestPath: String, content: ByteArray, executable: Boolean) {
     var directory = rootfsDir
     guestPath.trim('/').split('/').dropLast(1).forEach { part ->
@@ -584,100 +514,6 @@ class ProotSessionLauncher(
     }
   }
 
-  /**
-   * Codex's Linux sandbox is unavailable under Android PRoot. Keep Codex
-   * usable by making the selected mobile policy explicit at the interactive
-   * shell boundary: `codex` requests full local access from Codex while its
-   * normal approval policy remains unchanged. The `command` builtin skips
-   * this function when resolving the real executable, so npm-installed Codex
-   * binaries continue to be found through the bounded guest PATH.
-   */
-  private fun prepareCodexProfile(guestHomeDir: File) {
-    val profile = File(guestHomeDir, PROFILE_NAME)
-    if (Files.isSymbolicLink(profile.toPath())) {
-      throw IllegalStateException("guest profile is a symbolic link")
-    }
-    if (profile.exists() && !profile.isFile) {
-      throw IllegalStateException("guest profile is not a regular file")
-    }
-    if (profile.exists() && profile.length() > MAX_PROFILE_BYTES) {
-      throw IllegalStateException("guest profile is too large")
-    }
-    val existing = if (profile.exists()) profile.readText(Charsets.UTF_8) else ""
-    val start = existing.indexOf(CODEX_PROFILE_BEGIN)
-    val end = existing.indexOf(CODEX_PROFILE_END)
-    if ((start < 0) != (end < 0) || (start >= 0 && end < start)) {
-      throw IllegalStateException("guest profile has an incomplete Codex policy block")
-    }
-    if (start >= 0 && existing.indexOf(CODEX_PROFILE_BEGIN, start + CODEX_PROFILE_BEGIN.length) >= 0) {
-      throw IllegalStateException("guest profile has duplicate Codex policy blocks")
-    }
-    val blockEnd = if (end >= 0) end + CODEX_PROFILE_END.length else -1
-    val updated = if (start >= 0) {
-      existing.substring(0, start) + CODEX_PROFILE_BLOCK + existing.substring(blockEnd)
-    } else {
-      val prefix = existing.trimEnd()
-      if (prefix.isEmpty()) CODEX_PROFILE_BLOCK + "\n" else "$prefix\n\n$CODEX_PROFILE_BLOCK\n"
-    }
-    if (updated == existing) return
-
-    var temporary: File? = null
-    try {
-      temporary = File.createTempFile(".horus-profile-", ".tmp", guestHomeDir)
-      temporary.writeText(updated, Charsets.UTF_8)
-      Files.move(
-        temporary.toPath(),
-        profile.toPath(),
-        StandardCopyOption.ATOMIC_MOVE,
-        StandardCopyOption.REPLACE_EXISTING,
-      )
-    } finally {
-      temporary?.takeIf { it.exists() }?.delete()
-    }
-  }
-
-  /** Seeds a tool's global instructions before its first lazy install/launch. */
-  private fun prepareGlobalAgentInstructions(
-    guestHomeDir: File,
-    configDirectoryParts: List<String>,
-    instructionsFileName: String,
-    beginMarker: String,
-    endMarker: String,
-    managedBlock: String,
-    toolName: String,
-  ) {
-    var configDir = guestHomeDir
-    configDirectoryParts.forEach { part ->
-      require(part.isNotBlank() && part != "." && part != ".." && '/' !in part) {
-        "agent config directory part is invalid"
-      }
-      configDir = File(configDir, part)
-      if (Files.isSymbolicLink(configDir.toPath()) || (configDir.exists() && !configDir.isDirectory)) {
-        throw IllegalStateException("$toolName config directory is unavailable")
-      }
-      if (!configDir.exists() && !configDir.mkdirs() && !configDir.isDirectory) {
-        throw IllegalStateException("cannot create $toolName config directory")
-      }
-    }
-
-    val instructionsFile = File(configDir, instructionsFileName)
-    if (Files.isSymbolicLink(instructionsFile.toPath()) ||
-      (instructionsFile.exists() && !instructionsFile.isFile)
-    ) {
-      throw IllegalStateException("$toolName agent instructions are unavailable")
-    }
-    if (instructionsFile.exists() && instructionsFile.length() > MAX_AGENT_INSTRUCTIONS_BYTES) {
-      throw IllegalStateException("$toolName agent instructions are too large")
-    }
-    val existing = if (instructionsFile.exists()) instructionsFile.readText(Charsets.UTF_8) else ""
-    val updated = repairManagedBlock(existing, beginMarker, endMarker, managedBlock)
-    if (updated.toByteArray(Charsets.UTF_8).size > MAX_AGENT_INSTRUCTIONS_BYTES) {
-      throw IllegalStateException("$toolName agent instructions are too large")
-    }
-    if (updated != existing) atomicWrite(instructionsFile, updated)
-  }
-
-  /** Adds one bounded non-root identity to the active Alpine rootfs. */
   private fun prepareGuestAccount(rootfsDir: File, username: String, uid: Int, gid: Int) {
     synchronized(GUEST_ACCOUNT_MUTATION_LOCK) {
       prepareGuestAccountLocked(rootfsDir, username, uid, gid)
@@ -1034,120 +870,6 @@ class ProotSessionLauncher(
     false
   }
 
-  private fun hasCodexPayload(guestHomeDir: File): Boolean {
-    val entry = File(guestHomeDir, ".local/lib/node_modules/@openai/codex/bin/codex.js")
-    if (!entry.isFile || !entry.canExecute()) return false
-    return runCatching {
-      entry.bufferedReader(Charsets.UTF_8).use { it.readLine() == "#!/usr/bin/env node" }
-    }.getOrDefault(false)
-  }
-
-  internal fun codexPayloadStamp(guestHomeDir: File): String? {
-    if (!hasCodexPayload(guestHomeDir)) return null
-    val modules = File(guestHomeDir, ".local/lib/node_modules")
-    val packageRoot = File(modules, "@openai/codex")
-    val platformRoot = listOf(
-      File(packageRoot, "node_modules/@openai/codex-linux-arm64"),
-      File(modules, "@openai/codex-linux-arm64"),
-    ).firstOrNull { File(it, "package.json").isFile } ?: packageRoot
-    val compatible = runCatching {
-      val wrapper = org.json.JSONObject(File(packageRoot, "package.json").readText())
-      val spec = wrapper.optJSONObject("optionalDependencies")?.optString("@openai/codex-linux-arm64").orEmpty()
-      val version = wrapper.getString("version")
-      if (platformRoot == packageRoot) spec.isEmpty() else {
-        val nativeVersion = org.json.JSONObject(File(platformRoot, "package.json").readText()).getString("version")
-        spec == "npm:@openai/codex@$nativeVersion" && nativeVersion == "$version-linux-arm64"
-      }
-    }.getOrDefault(false)
-    if (!compatible) return null
-    val vendor = File(platformRoot, "vendor/aarch64-unknown-linux-musl")
-    val native = listOf(File(vendor, "bin/codex"), File(vendor, "codex/codex"))
-      .firstOrNull { it.isFile && it.canExecute() } ?: return null
-    // A script/empty file is not a Linux ARM64 native payload.
-    val valid = runCatching {
-      native.inputStream().use {
-        val header = ByteArray(20)
-        it.read(header) == 20 && header[0] == 0x7f.toByte() &&
-          header[1] == 0x45.toByte() && header[2] == 0x4c.toByte() && header[3] == 0x46.toByte() &&
-          header[4] == 2.toByte() && header[5] == 1.toByte() &&
-          header[18] == 0xb7.toByte() && header[19] == 0.toByte()
-      }
-    }.getOrDefault(false)
-    if (!valid) return null
-    val identities = listOf(
-      File(packageRoot, "bin/codex.js"), File(packageRoot, "package.json"),
-      File(platformRoot, "package.json"), native,
-    ).map { filePayloadStamp(it) ?: return null }
-    val metadata = listOf(File(packageRoot, "package.json"), File(platformRoot, "package.json")).map { file ->
-      runCatching {
-        java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
-      }.getOrNull() ?: return null
-    }
-    return (identities + metadata).joinToString(",", postfix = ",")
-  }
-
-  private fun hasOpenCodePayload(guestHomeDir: File): Boolean {
-    val entry = listOf(
-      File(guestHomeDir, ".local/lib/node_modules/opencode-ai/bin/opencode"),
-      File(guestHomeDir, ".local/lib/node_modules/opencode-ai/bin/opencode.exe"),
-    ).firstOrNull { it.isFile && it.canExecute() } ?: return false
-    return runCatching {
-      entry.inputStream().use {
-        it.read() == 0x7f && it.read() == 0x45 && it.read() == 0x4c && it.read() == 0x46
-      }
-    }.getOrDefault(false)
-  }
-
-  private fun openCodePayloadStamp(guestHomeDir: File): String? {
-    val entry = listOf(
-      File(guestHomeDir, ".local/lib/node_modules/opencode-ai/bin/opencode"),
-      File(guestHomeDir, ".local/lib/node_modules/opencode-ai/bin/opencode.exe"),
-    ).firstOrNull { it.isFile && it.canExecute() } ?: return null
-    return filePayloadStamp(entry)
-  }
-
-  private fun filePayloadStamp(entry: File): String? {
-    return runCatching {
-      val stat = Os.stat(entry.absolutePath)
-      "${stat.st_size}:${stat.st_mtime}:${stat.st_ino}:${stat.st_dev}"
-    }.getOrElse {
-      // Host-side JVM tests do not provide android.system.Os; the NIO fallback
-      // keeps their readiness check equivalent while Android API 24+ uses Os.
-      runCatching {
-        val attributes = Files.readAttributes(entry.toPath(), "unix:size,lastModifiedTime,ino,dev")
-        val size = attributes["size"]
-        val modified = attributes["lastModifiedTime"]
-        val inode = attributes["ino"]
-        val device = attributes["dev"]
-        if (size is Long && modified is FileTime && inode is Long && device is Long) {
-          "$size:${modified.toMillis() / 1000}:$inode:$device"
-        } else {
-          null
-        }
-      }.getOrNull()
-    }
-  }
-
-  private fun hasClaudeLauncher(guestHomeDir: File): Boolean {
-    val launcher = File(guestHomeDir, ".local/bin/claude")
-    return launcher.isFile && launcher.canExecute() && !Files.isSymbolicLink(launcher.toPath())
-  }
-
-  private fun hasPortableShellLauncher(
-    guestHomeDir: File,
-    launcherName: String,
-    relativePayload: String,
-  ): Boolean {
-    val launcher = File(guestHomeDir, ".local/bin/$launcherName")
-    if (!launcher.isFile || !launcher.canExecute() || Files.isSymbolicLink(launcher.toPath())) return false
-    return runCatching {
-      val content = launcher.readText(Charsets.UTF_8)
-      content.lineSequence().firstOrNull() == "#!/bin/sh" &&
-        content.contains("\$HOME/$relativePayload") &&
-        !content.contains("/root/")
-    }.getOrDefault(false)
-  }
-
   fun hasProvisionedToolchain(rootfsDir: File, guestHomeDir: File, target: String): Boolean {
     require(TerminalRuntimeContract.isValidToolchainTarget(target)) { "toolchain target is invalid" }
     val rootfsZsh = listOf(File(rootfsDir, "bin/zsh"), File(rootfsDir, "usr/bin/zsh"))
@@ -1161,52 +883,7 @@ class ProotSessionLauncher(
         .any { it.isFile && it.canExecute() }
       return rootfsGh && readyMarker.isFile
     }
-    if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE) {
-      // The native installer creates an absolute /root symlink. Provisioning
-      // rewrites it to a HOME-relative wrapper because interactive sessions
-      // run as the configured Alpine user, not root.
-      return readyMarker.isFile && hasClaudeLauncher(guestHomeDir)
-    }
-    val rootfsNode = File(rootfsDir, "usr/bin/node").let { it.isFile && it.canExecute() }
-    // apk installs npm in /usr/bin; on Debian it is npm's own release in /usr/local/bin.
-    val rootfsNpm = listOf(File(rootfsDir, "usr/bin/npm"), File(rootfsDir, "usr/local/bin/npm"))
-      .any { it.isFile && it.canExecute() }
-    val launcher = when (target) {
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "claude"
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "codex"
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "opencode"
-      else -> return false
-    }
-    val markerReady = if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE ||
-      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX) {
-      val stamp = if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX) codexPayloadStamp(guestHomeDir)
-        else openCodePayloadStamp(guestHomeDir)
-      stamp != null && readyMarker.isFile && readyMarker.length() in 1..512 &&
-        runCatching { readyMarker.readText(Charsets.US_ASCII).trim() == "ready:$stamp" }.getOrDefault(false)
-    } else {
-      readyMarker.isFile
-    }
-    return rootfsNode && rootfsNpm && markerReady && when (target) {
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX ->
-        hasPortableShellLauncher(guestHomeDir, launcher, ".local/lib/node_modules/@openai/codex/bin/codex.js") &&
-          hasCodexPayload(guestHomeDir) &&
-          hasProcpsPs(rootfsDir)
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE ->
-        (hasPortableShellLauncher(guestHomeDir, launcher, ".local/lib/node_modules/opencode-ai/bin/opencode") ||
-          hasPortableShellLauncher(guestHomeDir, launcher, ".local/lib/node_modules/opencode-ai/bin/opencode.exe")) &&
-          hasOpenCodePayload(guestHomeDir)
-      else -> false
-    }
-  }
-
-  /**
-   * Codex reads process start times with `ps -p PID -o lstart=`. BusyBox's
-   * /bin/ps is a symlink and lacks both options; procps-ng replaces it with
-   * a real binary.
-   */
-  private fun hasProcpsPs(rootfsDir: File): Boolean {
-    val ps = File(rootfsDir, "bin/ps").toPath()
-    return Files.isRegularFile(ps, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+    return false
   }
 
   private fun hasBaseUtilities(rootfsDir: File): Boolean =
@@ -1235,12 +912,6 @@ class ProotSessionLauncher(
     const val GUEST_LANG = "C.UTF-8"
     const val GUEST_SUDO_PATH = "/usr/local/bin/sudo"
     const val GUEST_ROOT_HELPER_PATH = "/usr/local/lib/horus/sudo-helper"
-    const val GUEST_AGENT_HOMES_PATH = "/usr/local/lib/horus/agent-homes"
-    private val AGENT_STUB_TARGETS = setOf(
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
-    )
     private val ROOT_HELPER_FILES = listOf("sudo" to GUEST_SUDO_PATH, "sudo-helper" to GUEST_ROOT_HELPER_PATH)
     const val HOST_PROC = "/proc"
     const val HOST_DEV = "/dev"
@@ -1254,35 +925,10 @@ class ProotSessionLauncher(
     private const val MAX_AGENT_INSTRUCTIONS_BYTES = 256 * 1024L
     private const val MAX_SESSION_COMMAND_LENGTH = 4096
     private const val MAX_GUEST_ID = 65_533
-    const val CODEX_PROFILE_BEGIN = "# BEGIN HORUS_CODEX_UNSANDBOXED_V1"
-    const val CODEX_PROFILE_END = "# END HORUS_CODEX_UNSANDBOXED_V1"
     const val ZSH_PROFILE_BEGIN = "# BEGIN HORUS_ZSH_V1"
     const val ZSH_PROFILE_END = "# END HORUS_ZSH_V1"
     const val ZSHRC_BEGIN = "# BEGIN HORUS_ZSHRC_V1"
     const val ZSHRC_END = "# END HORUS_ZSHRC_V1"
-    const val CODEX_AGENT_INSTRUCTIONS_BEGIN = "<!-- BEGIN HORUS_CODEX_MOBILE_ENV_V1 -->"
-    const val CODEX_AGENT_INSTRUCTIONS_END = "<!-- END HORUS_CODEX_MOBILE_ENV_V1 -->"
-    const val CLAUDE_AGENT_INSTRUCTIONS_BEGIN = "<!-- BEGIN HORUS_CLAUDE_CODE_MOBILE_ENV_V1 -->"
-    const val CLAUDE_AGENT_INSTRUCTIONS_END = "<!-- END HORUS_CLAUDE_CODE_MOBILE_ENV_V1 -->"
-    const val OPENCODE_AGENT_INSTRUCTIONS_BEGIN = "<!-- BEGIN HORUS_OPENCODE_MOBILE_ENV_V1 -->"
-    const val OPENCODE_AGENT_INSTRUCTIONS_END = "<!-- END HORUS_OPENCODE_MOBILE_ENV_V1 -->"
-    private const val CODEX_CONFIG_DIRECTORY_NAME = ".codex"
-    private const val CODEX_AGENT_INSTRUCTIONS_NAME = "AGENTS.md"
-    private const val CLAUDE_CONFIG_DIRECTORY_NAME = ".claude"
-    private const val CLAUDE_AGENT_INSTRUCTIONS_NAME = "CLAUDE.md"
-    private val OPENCODE_CONFIG_DIRECTORY_PARTS = listOf(".config", "opencode")
-    private const val OPENCODE_AGENT_INSTRUCTIONS_NAME = "AGENTS.md"
-    private val CODEX_PROFILE_BLOCK = """
-      $CODEX_PROFILE_BEGIN
-      # Codex Linux sandboxing is unavailable under Android PRoot, and so is
-      # its background app-server: PRoot maps its control socket to a host
-      # path longer than a Unix socket allows, so the server never listens.
-      codex() {
-        command codex --sandbox danger-full-access --no-daemon "${'$'}@"
-      }
-      export HORUS_CODEX_MODE=unsandboxed
-      $CODEX_PROFILE_END
-    """.trimIndent()
     private val ZSH_PROFILE_BLOCK = """
       $ZSH_PROFILE_BEGIN
       export HORUS_ZSH_THEME=horus
@@ -1327,12 +973,6 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       unsetopt flow_control
       stty -ixon 2>/dev/null || true
       export PATH="${'$'}HOME/.local/bin:/usr/local/bin:${'$'}{PATH:-/usr/sbin:/usr/bin:/sbin:/bin}"
-      # Codex's Linux sandboxing and background app-server are unavailable
-      # under Android PRoot (see the profile block).
-      codex() {
-        command codex --sandbox danger-full-access --no-daemon "${'$'}@"
-      }
-      export HORUS_CODEX_MODE=unsandboxed
       if [[ "${'$'}{HORUS_BOOTSTRAP:-}" == 1 ]]; then
         # Keep the first launcher command invisible while the React Native
         # side waits for this prompt. buildZshCommand restores echo before
@@ -1346,39 +986,6 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       PS2='%F{blue}>%f '
       $ZSHRC_END
     """.trimIndent()
-    private val CODEX_AGENT_INSTRUCTIONS_BLOCK = """
-      $CODEX_AGENT_INSTRUCTIONS_BEGIN
-      ## Runtime environment
-      - Codex runs in Horus on Android inside a Linux ARM64 guest through PRoot. The distribution is Alpine or Debian; read `/etc/os-release` before assuming either.
-      - Alpine uses `apk`, musl, and BusyBox applets; Debian uses `apt` and glibc. Do not assume `systemd` or a running init, and check available commands and options before relying on them.
-      - Codex runs as the dedicated non-root `harness_codex` user with its own persistent home; projects are available under `/workspace`.
-      - Horus provisions system dependencies as root before launching Codex. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
-      - Codex's Linux sandbox is unavailable under Android PRoot. Horus launches the CLI with `--sandbox danger-full-access`; do not assume Codex's own sandbox isolates commands from files accessible to this harness user.
-      $CODEX_AGENT_INSTRUCTIONS_END
-    """.trimIndent()
-    private val CLAUDE_AGENT_INSTRUCTIONS_BLOCK = """
-      $CLAUDE_AGENT_INSTRUCTIONS_BEGIN
-      ## Runtime environment
-      - Claude Code runs in Horus on Android inside a Linux ARM64 guest through PRoot. The distribution is Alpine or Debian; read `/etc/os-release` before assuming either.
-      - Alpine uses `apk`, musl, and BusyBox applets; Debian uses `apt` and glibc. Do not assume `systemd` or a running init, and check available commands and options before relying on them.
-      - Claude Code runs as the dedicated non-root `harness_claude` user with its own persistent home; projects are available under `/workspace`.
-      - Horus provisions system dependencies as root before launching Claude Code. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
-      - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
-      $CLAUDE_AGENT_INSTRUCTIONS_END
-    """.trimIndent()
-    private val OPENCODE_AGENT_INSTRUCTIONS_BLOCK = """
-      $OPENCODE_AGENT_INSTRUCTIONS_BEGIN
-      ## Runtime environment
-      - OpenCode runs in Horus on Android inside a Linux ARM64 guest through PRoot. The distribution is Alpine or Debian; read `/etc/os-release` before assuming either.
-      - Alpine uses `apk`, musl, and BusyBox applets; Debian uses `apt` and glibc. Do not assume `systemd` or a running init, and check available commands and options before relying on them.
-      - OpenCode runs as the dedicated non-root `harness_opencode` user with its own persistent home; projects are available under `/workspace`.
-      - Horus provisions system dependencies as root before launching OpenCode. If a system package is missing, report it instead of assuming `apk add` or `apt install` will work from the session.
-      - Commands run through Android PRoot. Do not assume Linux namespaces or kernel sandboxing isolate them from files accessible to the Horus app; PRoot's emulated user IDs are not a hard security boundary.
-      $OPENCODE_AGENT_INSTRUCTIONS_END
-    """.trimIndent()
-    // Points apk at the chosen mirror. Each repository line keeps its branch
-    // and name (v3.24/main); only the server in front of it changes. The
-    // mirror URL is validated by DownloadSources and cannot contain '@'.
     internal val APK_MIRROR_SCRIPT = """
       if [ -n "${'$'}{HORUS_ALPINE_MIRROR:-}" ] && [ -w /etc/apk/repositories ]; then
         sed -i -E "s@^[^#]*/(v[0-9]+\.[0-9]+|edge)/([a-z]+)/?\${'$'}@${'$'}HORUS_ALPINE_MIRROR/\1/\2@" /etc/apk/repositories || true
@@ -1390,25 +997,21 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
      * same script serves either rootfs. apt runs as root under PRoot, where
      * it cannot drop to its _apt sandbox user, and refreshes its lists at
      * most once a day.
-     */
-    /** npm release installed on Debian, and its registry `dist.integrity`. */
-    internal const val UPSTREAM_NPM_VERSION = "11.12.1"
-    internal const val UPSTREAM_NPM_INTEGRITY =
-      "sha512-zcoUuF1kezGSAo0CqtvoLXX3mkRqzuqYdL6Y5tdo8g69NVV3CkjQ6ZBhBgB4d7vGkPcV6TcvLi3GRKPDFX+xTA=="
 
     internal val PACKAGE_MANAGER_SCRIPT = """
       if [ -x /usr/bin/apt-get ]; then
         horus_pkg=apt
         # Debian splits venv (and its ensurepip) out of python3.
         pkgs_shell="ca-certificates curl git jq less openssh-client python3 python3-venv ripgrep tzdata zsh"
+        pkgs_github="gh git openssh-client zsh"
         has_python_venv() {
           for venv_dir in /usr/lib/python3.*/ensurepip; do [ -d "${'$'}venv_dir" ] && return 0; done
           return 1
         }
+      else
+        horus_pkg=apk
         pkgs_shell="ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh"
-        # Core packages only - removed AI tools to save space
-        pkgs_base="bash ca-certificates curl git openssh-client-default python3 zsh"
-        pkgs_procps="procps-ng"
+        pkgs_github="gh git openssh-client-default zsh"
         has_python_venv() { true; }
       fi
       # The latest progress line, for the app to show while tools install.
@@ -1463,188 +1066,17 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         : > "${'$'}pkg_progress"
         return "${'$'}pkg_result"
       }
-      # Debian's npm (9.2) needs ~400 node-* packages, and its cache moves
-      # files with link, then unlink and chmod in parallel, which races
-      # under PRoot's link2symlink (npm ERR! ENOENT ... rename). Install
-      # npm's own release instead: one pinned tarball, checked against its
-      # registry checksum, with its dependencies bundled.
-      upstream_npm_dir=/usr/local/lib/node_modules/npm
-      has_upstream_npm() {
-        [ -x /usr/local/bin/npm ] && grep -q '"version": "$UPSTREAM_NPM_VERSION"' "${'$'}upstream_npm_dir/package.json" 2>/dev/null
-      }
-      install_upstream_npm() {
-        npm_registry=${'$'}{npm_config_registry:-https://registry.npmjs.org}
-        npm_registry=${'$'}{npm_registry%/}
-        npm_work=${'$'}(mktemp -d /root/.cache/horus/npm.XXXXXX) || return 1
-        if node -e '
-          const [url, integrity, out] = process.argv.slice(1);
-          (async () => {
-            const response = await fetch(url, {signal: AbortSignal.timeout(300000)});
-            if (!response.ok) throw new Error("npm download failed: HTTP " + response.status);
-            const body = Buffer.from(await response.arrayBuffer());
-            const digest = "sha512-" + require("crypto").createHash("sha512").update(body).digest("base64");
-            if (digest !== integrity) throw new Error("npm download failed its checksum");
-            require("fs").writeFileSync(out, body);
-          })().catch(error => { console.error(error.message); process.exit(1); });
-        ' "${'$'}npm_registry/npm/-/npm-$UPSTREAM_NPM_VERSION.tgz" "$UPSTREAM_NPM_INTEGRITY" "${'$'}npm_work/npm.tgz" &&
-          mkdir -p "${'$'}npm_work/npm" /usr/local/lib/node_modules /usr/local/bin &&
-          tar -xzf "${'$'}npm_work/npm.tgz" -C "${'$'}npm_work/npm" --strip-components=1 &&
-          rm -rf "${'$'}upstream_npm_dir" &&
-          mv "${'$'}npm_work/npm" "${'$'}upstream_npm_dir" &&
-          printf '#!/bin/sh\nexec node %s/bin/npm-cli.js "$@"\n' "${'$'}upstream_npm_dir" > /usr/local/bin/npm &&
-          printf '#!/bin/sh\nexec node %s/bin/npx-cli.js "$@"\n' "${'$'}upstream_npm_dir" > /usr/local/bin/npx &&
-          chmod 755 /usr/local/bin/npm /usr/local/bin/npx; then
-          npm_result=0
-        else
-          npm_result=1
-        fi
-        rm -rf "${'$'}npm_work"
-        return "${'$'}npm_result"
-      }
     """.trimIndent()
     // npm may successfully install the JS wrapper while skipping its optional
     // native package. Install the exact declared alias as a required package
     // on recovery; both Linux layouts contain Alpine-compatible musl binaries.
-    internal val CODEX_INSTALL_SCRIPT = """
-      codex_entry="${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js"
-      codex_native_path() {
-        codex_root=${'$'}{codex_entry%/bin/codex.js}
-        codex_platform=${'$'}codex_root
-        for candidate in "${'$'}codex_root/node_modules/@openai/codex-linux-arm64" "${'$'}{codex_root%/codex}/codex-linux-arm64"; do
-          if [ -f "${'$'}candidate/package.json" ]; then codex_platform=${'$'}candidate; break; fi
-        done
-        for candidate in "${'$'}codex_platform/vendor/aarch64-unknown-linux-musl/bin/codex" "${'$'}codex_platform/vendor/aarch64-unknown-linux-musl/codex/codex"; do
-          if [ -x "${'$'}candidate" ]; then codex_native=${'$'}candidate; return 0; fi
-        done
-        return 1
-      }
-      codex_stamp() {
-        # File identities cover the wrapper, declared version, selected alias
-        # and native payload. Routine SSH checks start neither Node nor Codex.
-        codex_native_path || return 1
-        codex_stats=${'$'}(stat -L -c '%s:%Y:%i:%d' "${'$'}codex_entry" "${'$'}codex_root/package.json" "${'$'}codex_platform/package.json" "${'$'}codex_native") || return 1
-        codex_metadata=${'$'}(sha256sum "${'$'}codex_root/package.json" "${'$'}codex_platform/package.json") || return 1
-        printf '%s\n' "${'$'}codex_stats" | tr '\n' ','
-        printf '%s\n' "${'$'}codex_metadata" | cut -d ' ' -f 1 | tr '\n' ','
-      }
-      codex_metadata_valid() {
-        codex_native_path || return 1
-        /usr/bin/node --input-type=commonjs -e '
-          const fs = require("fs");
-          const [root, platform, binary] = process.argv.slice(1);
-          const wrapper = JSON.parse(fs.readFileSync(root + "/package.json"));
-          const native = JSON.parse(fs.readFileSync(platform + "/package.json"));
-          const spec = wrapper.optionalDependencies?.["@openai/codex-linux-arm64"];
-          if (platform !== root) {
-            if (!spec?.startsWith("npm:@openai/codex@") || native.version !== spec.slice("npm:@openai/codex@".length) || native.version !== wrapper.version + "-linux-arm64") process.exit(1);
-          } else if (spec || !wrapper.version) process.exit(1);
-          const fd = fs.openSync(binary, "r"), h = Buffer.alloc(20);
-          const size = fs.readSync(fd, h, 0, 20, 0); fs.closeSync(fd);
-          if (size !== 20 || h.readUInt32BE(0) !== 0x7f454c46 || h[4] !== 2 || h[5] !== 1 || h.readUInt16LE(18) !== 183) process.exit(1);
-        ' "${'$'}codex_root" "${'$'}codex_platform" "${'$'}codex_native"
-      }
-      codex_works() {
-        timeout -s KILL 20 /usr/bin/node "${'$'}codex_entry" --version
-      }
-      codex_stamped() {
-        codex_identity=${'$'}(codex_stamp) && [ -n "${'$'}codex_identity" ] &&
-          [ "${'$'}(cat "${'$'}HOME/.cache/horus/codex.ready" 2>/dev/null)" = "ready:${'$'}codex_identity" ]
-      }
-      mark_codex_ready() {
-        codex_identity=${'$'}(codex_stamp) && [ -n "${'$'}codex_identity" ] || {
-          rm -f "${'$'}HOME/.cache/horus/codex.ready"
-          return 1
-        }
-        printf 'ready:%s\n' "${'$'}codex_identity" > "${'$'}HOME/.cache/horus/codex.ready.tmp" &&
-          mv -f "${'$'}HOME/.cache/horus/codex.ready.tmp" "${'$'}HOME/.cache/horus/codex.ready"
-      }
-      restore_codex_package() {
-        codex_package="${'$'}HOME/.local/lib/node_modules/@openai/codex"
-        codex_previous="${'$'}HOME/.local/lib/node_modules/@openai/.codex.previous"
-        if [ ! -e "${'$'}codex_package" ] && [ -d "${'$'}codex_previous" ]; then
-          mv "${'$'}codex_previous" "${'$'}codex_package" || return 1
-        fi
-      }
-      stage_codex_package() (
-        codex_stage="${'$'}HOME/.local/.codex-stage"
-        rm -rf "${'$'}codex_stage" || exit 1
-        mkdir -p "${'$'}codex_stage" || exit 1
-        trap 'rm -rf "${'$'}codex_stage"' EXIT
-        npm install --global --force --prefix "${'$'}codex_stage" --include=optional --no-package-lock --no-audit --no-fund --no-progress --loglevel=error @openai/codex || exit 1
-        codex_entry="${'$'}codex_stage/lib/node_modules/@openai/codex/bin/codex.js"
-        # Required recovery installs cannot reuse a top-level alias from an
-        # earlier wrapper. Move the exact alias inside the staged wrapper.
-        if ! codex_metadata_valid; then
-          codex_spec=${'$'}(/usr/bin/node --input-type=commonjs -e '
-            const p = require(process.argv[1]);
-            const spec = p.optionalDependencies && p.optionalDependencies["@openai/codex-linux-arm64"];
-            if (!spec || spec !== "npm:@openai/codex@" + p.version + "-linux-arm64") process.exit(1);
-            console.log("@openai/codex-linux-arm64@" + spec);
-          ' "${'$'}{codex_entry%/bin/codex.js}/package.json") || exit 1
-          rm -rf "${'$'}{codex_entry%/bin/codex.js}/node_modules/@openai/codex-linux-arm64" "${'$'}codex_stage/lib/node_modules/@openai/codex-linux-arm64" || exit 1
-          npm install --global --force --prefix "${'$'}codex_stage" --include=optional --no-package-lock --no-audit --no-fund --no-progress --loglevel=error "${'$'}codex_spec" || exit 1
-        fi
-        codex_native_path >/dev/null || exit 1
-        if [ "${'$'}codex_platform" = "${'$'}codex_stage/lib/node_modules/@openai/codex-linux-arm64" ]; then
-          mkdir -p "${'$'}{codex_entry%/bin/codex.js}/node_modules/@openai" &&
-            mv "${'$'}codex_platform" "${'$'}{codex_entry%/bin/codex.js}/node_modules/@openai/codex-linux-arm64" || exit 1
-        fi
-        chmod u+rx "${'$'}codex_entry" || exit 1
-        codex_metadata_valid && codex_works && codex_stamp >/dev/null || exit 1
-        codex_package="${'$'}HOME/.local/lib/node_modules/@openai/codex"
-        codex_previous="${'$'}HOME/.local/lib/node_modules/@openai/.codex.previous"
-        mkdir -p "${'$'}{codex_package%/codex}" || exit 1
-        rm -rf "${'$'}codex_previous" || exit 1
-        # The durable backup also covers SIGKILL/power loss between renames.
-        # Keep it after success; running sessions may still use its payload.
-        if [ -e "${'$'}codex_package" ]; then mv "${'$'}codex_package" "${'$'}codex_previous" || exit 1; fi
-        trap 'restore_codex_package; rm -rf "${'$'}codex_stage"' EXIT
-        trap 'exit 1' HUP INT TERM
-        mv "${'$'}{codex_entry%/bin/codex.js}" "${'$'}codex_package" || exit 1
-        codex_entry="${'$'}codex_package/bin/codex.js"
-        if ! mark_codex_ready; then
-          rm -rf "${'$'}codex_package"
-          restore_codex_package
-          exit 1
-        fi
-      )
-      # The backup outlives its install so sessions started from it keep
-      # running. Once a later check finds the new package stamped, drop it.
-      prune_codex_backup() (
-        exec 8>"${'$'}HOME/.cache/horus/codex-install.lock"
-        flock -n 8 || exit 0
-        if codex_stamped; then rm -rf "${'$'}HOME/.local/lib/node_modules/@openai/.codex.previous"; fi
-      )
-      install_codex_package() (
-        mkdir -p "${'$'}HOME/.cache/horus" || exit 1
-        # App provisioning and SSH share this lock, including crash recovery.
-        exec 8>"${'$'}HOME/.cache/horus/codex-install.lock"
-        flock 8 || exit 1
-        restore_codex_package || exit 1
-        if codex_stamped; then exit 0; fi
-        if codex_metadata_valid; then
-          codex_status=0
-          codex_works || codex_status=${'$'}?
-          if [ "${'$'}codex_status" = 0 ]; then mark_codex_ready; exit ${'$'}?; fi
-          case "${'$'}codex_status" in
-            124|137)
-              printf '%s\n' 'Codex readiness check timed out; the installed package was preserved. Retry when the device is less busy.' >&2
-              exit "${'$'}codex_status" ;;
-          esac
-        fi
-        if ! stage_codex_package; then
-          printf '%s\n' 'Codex recovery failed; the previous package was preserved. Check connectivity/free storage and retry.' >&2
-          exit 1
-        fi
-      )
-    """.trimIndent()
     private val TOOLCHAIN_PROVISION_SCRIPT = """
       set -eu
       export HOME=/root
       export PATH=/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       target=${'$'}{HORUS_TOOLCHAIN_TARGET:-shell}
       case "${'$'}target" in
-        shell|github|claude|codex|opencode) ;;
+        shell|github) ;;
         *) exit 20 ;;
       esac
       printf '%s\n' "HORUS_INSTALL_TARGET=${'$'}target"
@@ -1697,100 +1129,6 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         fi
         return "${'$'}command_status"
       }
-      # The installers download silently (curl -s, npm --no-progress), so
-      # report how much has landed in their download directories instead,
-      # as a percentage when the expected size is known.
-      download_kb() {
-        du -sk "${'$'}@" 2>/dev/null | awk '{ total += ${'$'}1 } END { print total + 0 }'
-      }
-      # Size of the Claude Code binary install.sh is about to fetch, from the
-      # same manifest it reads. Prints nothing when the manifest is unreachable.
-      claude_download_kb() {
-        claude_base=https://downloads.claude.ai/claude-code-releases
-        claude_arch=${'$'}(uname -m)
-        if [ "${'$'}claude_arch" = aarch64 ]; then claude_arch=arm64; fi
-        # install.sh fetches the musl build on Alpine and the glibc one elsewhere.
-        claude_libc=
-        if [ -e /lib/ld-musl-aarch64.so.1 ] || [ -e /lib/ld-musl-x86_64.so.1 ]; then claude_libc=-musl; fi
-        claude_version=${'$'}(curl --connect-timeout 15 --max-time 30 -fsSL "${'$'}claude_base/latest" 2>/dev/null) || return 0
-        curl --connect-timeout 15 --max-time 30 -fsSL "${'$'}claude_base/${'$'}claude_version/manifest.json" 2>/dev/null |
-          tr -d ' \n' |
-          sed -n "s/.*\"linux-${'$'}claude_arch${'$'}claude_libc\":{[^{}]*\"size\":\([0-9]*\).*/\1/p" |
-          awk '${'$'}1 > 0 { printf "%d\n", (${'$'}1 + 1023) / 1024 }' || true
-      }
-      # Compressed size of every tarball `npm install <package>` downloads:
-      # the package plus the optional platform packages npm keeps on this
-      # os/cpu/libc. Prints nothing when the registry does not say.
-      npm_download_kb() {
-        node -e '
-          const registry = (process.env.npm_config_registry || "https://registry.npmjs.org").replace(/\/+${'$'}/, "");
-          const libc = process.report.getReport().header.glibcVersionRuntime ? "glibc" : "musl";
-          const fits = (list, value) => !list || list.length === 0 || list.includes(value) ||
-            (list.every(entry => entry.startsWith("!")) && !list.includes("!" + value));
-          const timeout = () => AbortSignal.timeout(15000);
-          const manifest = async (name, version) => {
-            const response = await fetch(registry + "/" + name.replace("/", "%2f") + "/" + version, {signal: timeout()});
-            if (!response.ok) throw new Error("manifest " + response.status);
-            return response.json();
-          };
-          const tarballBytes = async url => {
-            const response = await fetch(url, {headers: {Range: "bytes=0-0"}, signal: timeout()});
-            const total = /\/(\d+)${'$'}/.exec(response.headers.get("content-range") || "");
-            await response.body?.cancel();
-            if (!total) throw new Error("no size for " + url);
-            return Number(total[1]);
-          };
-          (async () => {
-            const root = await manifest(process.argv[1], "latest");
-            const optional = await Promise.all(Object.entries(root.optionalDependencies || {}).map(([alias, spec]) => {
-              if (!spec.startsWith("npm:")) return manifest(alias, spec);
-              const at = spec.lastIndexOf("@");
-              return manifest(spec.slice(4, at), spec.slice(at + 1));
-            }));
-            const kept = [root, ...optional.filter(doc =>
-              fits(doc.os, process.platform) && fits(doc.cpu, process.arch) && fits(doc.libc, libc))];
-            const sizes = await Promise.all(kept.map(doc => tarballBytes(doc.dist.tarball)));
-            console.log(Math.ceil(sizes.reduce((sum, size) => sum + size, 0) / 1024));
-          })().catch(() => {});
-        ' "${'$'}1" 2>/dev/null || true
-      }
-      watch_download() {
-        watch_label=${'$'}1
-        watch_total_kb=${'$'}{2:-0}
-        shift 2
-        watch_base=${'$'}(download_kb "${'$'}@")
-        watch_last=0
-        while sleep 2; do
-          watch_kb=${'$'}(( ${'$'}(download_kb "${'$'}@") - watch_base ))
-          if [ "${'$'}watch_total_kb" -gt 0 ]; then
-            watch_percent=${'$'}(( watch_kb * 100 / watch_total_kb ))
-            if [ "${'$'}watch_percent" -gt 100 ]; then watch_percent=100; fi
-            if [ "${'$'}watch_percent" -gt "${'$'}watch_last" ]; then
-              printf '%s\n' "Downloading ${'$'}{watch_label}… ${'$'}{watch_percent}% (${'$'}(( watch_kb / 1024 )) of ${'$'}(( watch_total_kb / 1024 )) MB)"
-              watch_last=${'$'}watch_percent
-            fi
-          else
-            watch_mb=${'$'}(( watch_kb / 1024 ))
-            if [ "${'$'}watch_mb" -gt "${'$'}watch_last" ]; then
-              printf '%s\n' "Downloading ${'$'}{watch_label}… ${'$'}{watch_mb} MB"
-              watch_last=${'$'}watch_mb
-            fi
-          fi
-        done
-      }
-      run_downloading() {
-        download_label=${'$'}1
-        download_total_kb=${'$'}2
-        download_dirs=${'$'}3
-        shift 3
-        # Word splitting on download_dirs is intended: it lists directories.
-        watch_download "${'$'}download_label" "${'$'}download_total_kb" ${'$'}download_dirs &
-        watch_pid=${'$'}!
-        if run_logged "${'$'}@"; then download_status=0; else download_status=${'$'}?; fi
-        kill "${'$'}watch_pid" 2>/dev/null || true
-        wait "${'$'}watch_pid" 2>/dev/null || true
-        return "${'$'}download_status"
-      }
       mark_provision_stage start
 
       if [ "${'$'}target" = shell ]; then
@@ -1822,25 +1160,6 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
             fi
           fi
         fi
-      # Shell-only installation - removed AI tools to save space
-      if ! command -v zsh >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
-        mark_provision_stage apk
-        if ! pkg_install /root/.cache/horus/alpine-bootstrap.log bash ca-certificates curl zsh; then
-          if ! command -v zsh >/dev/null 2>&1 || ! zsh -fc ':' >/dev/null 2>&1 || ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
-            mark_provision_stage apk_failed
-            exit 21
-          fi
-        fi
-      fi
-      # Codex's background server reads process start times with
-      # `ps -p PID -o lstart=`, which BusyBox ps does not support.
-      if [ "${'$'}target" = codex ] && ! ps -p "${'$'}${'$'}" -o lstart= >/dev/null 2>&1; then
-        mark_provision_stage apk
-        if ! pkg_install /root/.cache/horus/alpine-bootstrap.log ${'$'}pkgs_procps; then
-          mark_provision_stage apk_failed
-          exit 21
-        fi
-      fi
       # sudo's root helper is Python. The Bare terminal installs it with its
       # tools; install it with whatever opens first, so sudo works from the
       # first sign-in. A failure leaves sudo unavailable, not the app.
@@ -1850,156 +1169,6 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       mark_provision_stage base_ready
 
       target_marker=/root/.cache/horus/${'$'}target.ready
-      if [ "${'$'}target" = claude ] && { [ ! -f "${'$'}target_marker" ] || [ ! -x /root/.local/bin/claude ]; }; then
-        mark_provision_stage claude
-        install_claude() {
-          rm -f /root/.local/bin/claude /root/.cache/horus/claude-install.sh
-          curl --connect-timeout 15 --max-time 300 -fsSL https://claude.ai/install.sh -o /root/.cache/horus/claude-install.sh
-          bash /root/.cache/horus/claude-install.sh
-          test -x /root/.local/bin/claude
-        }
-        if ! run_downloading 'Claude Code' "${'$'}(claude_download_kb)" /root/.claude/downloads /root/.cache/horus/claude-install.log install_claude; then
-          mark_provision_stage claude_failed
-          exit 22
-        fi
-      fi
-      $CODEX_INSTALL_SCRIPT
-      if [ "${'$'}target" = codex ] && codex_stamped; then
-        prune_codex_backup || true
-      elif [ "${'$'}target" = codex ]; then
-        mark_provision_stage codex
-        if ! run_downloading Codex "${'$'}(npm_download_kb @openai/codex)" /root/.npm /root/.cache/horus/codex-install.log install_codex_package; then
-          mark_provision_stage codex_failed
-          exit 23
-        fi
-      fi
-      opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode
-      if [ ! -f "${'$'}opencode_entry" ]; then
-        opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode.exe
-      fi
-      opencode_payload_valid=false
-      opencode_payload_stamp=
-      if [ "${'$'}target" = opencode ] && [ -f "${'$'}opencode_entry" ]; then
-        if [ ! -x "${'$'}opencode_entry" ]; then chmod u+rx "${'$'}opencode_entry" || true; fi
-        if [ -x "${'$'}opencode_entry" ]; then
-          opencode_payload_stamp=${'$'}(stat -L -c '%s:%Y:%i:%d' "${'$'}opencode_entry" 2>/dev/null || true)
-          if [ -n "${'$'}opencode_payload_stamp" ] && [ "${'$'}(cat "${'$'}target_marker" 2>/dev/null || true)" = "ready:${'$'}opencode_payload_stamp" ]; then
-            # The ready stamp records the payload already validated after
-            # install. Avoid starting a second OpenCode process on every tap.
-            opencode_payload_valid=true
-          elif "${'$'}opencode_entry" --version >/dev/null 2>&1; then
-            opencode_payload_valid=true
-          fi
-        fi
-      fi
-      # A payload that answers --version only needs a fresh stamp (written
-      # below), so a missing marker never removes a working OpenCode offline.
-      if [ "${'$'}target" = opencode ] && [ "${'$'}opencode_payload_valid" != true ]; then
-        mark_provision_stage opencode
-        # npm/postinstall can retain an existing corrupted selected binary.
-        # Remove only the replaceable package, preserving ~/.config/opencode.
-        rm -f "${'$'}target_marker"
-        if ! rm -rf /root/.local/lib/node_modules/opencode-ai; then
-          mark_provision_stage opencode_failed
-          exit 24
-        fi
-        if ! run_downloading OpenCode "${'$'}(npm_download_kb opencode-ai)" /root/.npm /root/.cache/horus/opencode-install.log npm install --global --force --prefix /root/.local --no-package-lock --no-audit --no-fund --no-progress --loglevel=error opencode-ai; then
-          mark_provision_stage opencode_failed
-          exit 24
-        fi
-        opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode
-        if [ ! -f "${'$'}opencode_entry" ]; then
-          opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode.exe
-        fi
-        if ! { test -f "${'$'}opencode_entry" && { [ -x "${'$'}opencode_entry" ] || chmod u+rx "${'$'}opencode_entry"; } && "${'$'}opencode_entry" --version >/dev/null; }; then
-          mark_provision_stage opencode_failed
-          exit 24
-        fi
-        opencode_payload_stamp=${'$'}(stat -L -c '%s:%Y:%i:%d' "${'$'}opencode_entry" 2>/dev/null || true)
-        opencode_payload_valid=true
-      fi
-
-      if [ "${'$'}target" != shell ] && [ "${'$'}target" != github ]; then
-        # npm's global bin links are not consistent across Alpine/PRoot and
-        # published entrypoints can lose their execute bit. Rebuild only the
-        # launcher requested by this first app launch.
-        mark_provision_stage normalize
-        if [ "${'$'}target" = claude ]; then
-          if ! {
-            claude_launcher=/root/.local/bin/claude
-            if [ -L "${'$'}claude_launcher" ]; then
-              claude_target="${'$'}(readlink -f "${'$'}claude_launcher" 2>/dev/null || true)"
-              case "${'$'}claude_target" in
-                /root/*)
-                  claude_relative="${'$'}{claude_target#/root/}"
-                  rm -f "${'$'}claude_launcher"
-                  cat > "${'$'}claude_launcher" <<EOF
-#!/bin/sh
-exec "\${'$'}HOME/${'$'}claude_relative" "\${'$'}@"
-EOF
-                  ;;
-                /*)
-                  rm -f "${'$'}claude_launcher"
-                  cat > "${'$'}claude_launcher" <<EOF
-#!/bin/sh
-exec "${'$'}claude_target" "\${'$'}@"
-EOF
-                  ;;
-                *)
-                  exit 25
-                  ;;
-              esac
-            fi
-            test ! -L "${'$'}claude_launcher"
-            if [ ! -x /root/.local/bin/claude ]; then chmod u+rx /root/.local/bin/claude; fi
-            test -x /root/.local/bin/claude
-          }; then
-            mark_provision_stage normalize_failed
-            exit 25
-          fi
-        elif [ "${'$'}target" = codex ]; then
-          if ! {
-            codex_entry=/root/.local/lib/node_modules/@openai/codex/bin/codex.js
-            if [ ! -x "${'$'}codex_entry" ]; then chmod u+rx "${'$'}codex_entry"; fi
-            test "${'$'}(head -n 1 "${'$'}codex_entry" 2>/dev/null || true)" = '#!/usr/bin/env node'
-            codex_launcher=/root/.local/bin/codex
-            codex_expected="${'$'}(printf '%s\n' '#!/bin/sh' 'exec /usr/bin/node "${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js" "${'$'}@"')"
-            if [ ! -f "${'$'}codex_launcher" ] || [ -L "${'$'}codex_launcher" ] || [ ! -x "${'$'}codex_launcher" ] || [ "${'$'}(cat "${'$'}codex_launcher" 2>/dev/null || true)" != "${'$'}codex_expected" ]; then
-              rm -f "${'$'}codex_launcher"
-              printf '%s\n' '#!/bin/sh' 'exec /usr/bin/node "${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js" "${'$'}@"' > "${'$'}codex_launcher"
-              chmod u+rx "${'$'}codex_launcher"
-            fi
-          }; then
-            mark_provision_stage normalize_failed
-            exit 25
-          fi
-        else
-          if ! {
-            opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode
-            if [ ! -f "${'$'}opencode_entry" ]; then
-              opencode_entry=/root/.local/lib/node_modules/opencode-ai/bin/opencode.exe
-            fi
-            test -f "${'$'}opencode_entry"
-            test -x "${'$'}opencode_entry"
-            opencode_relative="${'$'}{opencode_entry#/root/}"
-            opencode_launcher=/root/.local/bin/opencode
-            opencode_expected=${'$'}(printf '#!/bin/sh\nexec "${'$'}HOME/%s" "${'$'}@"\n' "${'$'}opencode_relative")
-            if [ ! -f "${'$'}opencode_launcher" ] || [ -L "${'$'}opencode_launcher" ] || [ ! -x "${'$'}opencode_launcher" ] || [ "${'$'}(cat "${'$'}opencode_launcher" 2>/dev/null || true)" != "${'$'}opencode_expected" ]; then
-              rm -f "${'$'}opencode_launcher"
-              # OpenCode's postinstall selects a native Linux binary named
-              # opencode.exe on Alpine; it must not be passed to Node.
-              cat > "${'$'}opencode_launcher" <<EOF
-#!/bin/sh
-exec "\${'$'}HOME/${'$'}opencode_relative" "\${'$'}@"
-EOF
-              chmod u+rx "${'$'}opencode_launcher"
-            fi
-          }; then
-            mark_provision_stage normalize_failed
-            exit 25
-          fi
-        fi
-      fi
 
       mark_provision_stage verify
       if [ "${'$'}target" = shell ]; then
@@ -2012,24 +1181,12 @@ EOF
         test -e /lib/ld-linux-aarch64.so.1
       elif [ "${'$'}target" = github ]; then
         test -x /bin/gh || test -x /usr/bin/gh
-      elif [ "${'$'}target" = claude ]; then
-        test -x /root/.local/bin/claude
-      elif [ "${'$'}target" = codex ]; then
-        if ! codex_stamped; then
-          mark_provision_stage codex_failed
-          exit 23
-        fi
-      else
-        test -x /root/.local/bin/opencode
       fi
-      if [ "${'$'}target" = opencode ] && [ -n "${'$'}opencode_payload_stamp" ]; then
-        printf 'ready:%s\n' "${'$'}opencode_payload_stamp" > "${'$'}target_marker"
-      elif [ "${'$'}target" = codex ]; then
-        : # install_codex_package already recorded validated readiness atomically.
-      elif [ "${'$'}target" != shell ]; then
+      if [ "${'$'}target" != shell ]; then
         printf '%s\n' ready > "${'$'}target_marker"
       fi
       mark_provision_stage ready
+
       printf '%s\n\033[1A\033[2K' HORUS_TOOLCHAIN_READY
     """.trimIndent()
     private val TOOLCHAIN_SESSION_SCRIPT = """
@@ -2081,10 +1238,6 @@ EOF
         export XDG_DATA_HOME="${'$'}HOME/.local/share"
         export XDG_CACHE_HOME="${'$'}HOME/.cache"
         export USER="${'$'}HORUS_GUEST_USERNAME" LOGNAME="${'$'}HORUS_GUEST_USERNAME"
-        if [ "${'$'}{HORUS_TOOLCHAIN_TARGET:-}" = codex ]; then
-          export NPM_CONFIG_PREFIX="${'$'}HOME/.local"
-          export npm_config_prefix="${'$'}HOME/.local"
-        fi
         unset HORUS_BOOTSTRAP
         exec /bin/sh -c "${'$'}HORUS_SESSION_COMMAND"
       '
@@ -2095,8 +1248,6 @@ EOF
       # which PRoot's emulated root cannot satisfy.
       exec setpriv --reuid="${'$'}session_uid" --regid="${'$'}session_gid" --clear-groups -- /bin/sh -c "${'$'}user_script"
     """.trimIndent()
-    // The embedded Codex script supplies its own indent, including its first
-    // line, so the outer trimIndent() keeps heredoc terminators at column zero.
     private val REMOTE_ACCESS_SCRIPT = """
       set -eu
       user="${'$'}1"
@@ -2187,120 +1338,6 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
       mv -f "${'$'}login_shell.tmp" "${'$'}login_shell"
       grep -qx "${'$'}login_shell" /etc/shells 2>/dev/null || echo "${'$'}login_shell" >> /etc/shells
       sed -i "s#^\(${'$'}user:[^:]*:${'$'}uid:${'$'}gid:[^:]*:[^:]*:\).*#\1${'$'}login_shell#" /etc/passwd
-      # The agents install on first use, like the app's tiles do. Stubs in
-      # /usr/local/bin install the real launcher into ~/.local/bin, which
-      # comes first on PATH, then hand over to it.
-      agent_installer=/usr/local/lib/horus/install-agent
-      mkdir -p /usr/local/lib/horus
-      cat > "${'$'}agent_installer.tmp" <<'HORUS_INSTALLER'
-      #!/bin/sh
-      set -u
-      tool="${'$'}1"
-      shift
-      launcher="${'$'}HOME/.local/bin/${'$'}tool"
-      cache="${'$'}HOME/.cache/horus"
-      case "${'$'}tool" in
-        claude) name="Claude Code" ;;
-        codex) name="Codex" ;;
-        opencode) name="OpenCode" ;;
-        *) printf 'horus: unknown agent %s\n' "${'$'}tool" >&2; exit 2 ;;
-      esac
-      # Prefer the app's own install, run in its harness home, so SSH shares
-      # the app's login, settings, and trusted folders.
-      app_home=${'$'}(sed -n "s#^${'$'}tool=##p" $GUEST_AGENT_HOMES_PATH 2>/dev/null)
-      if [ -n "${'$'}app_home" ] && [ -x "${'$'}app_home/.local/bin/${'$'}tool" ]; then
-        export HOME="${'$'}app_home" XDG_CONFIG_HOME="${'$'}app_home/.config" XDG_DATA_HOME="${'$'}app_home/.local/share" XDG_CACHE_HOME="${'$'}app_home/.cache"
-        export PATH="${'$'}app_home/.local/bin:${'$'}PATH"
-        if [ "${'$'}tool" = codex ]; then export NPM_CONFIG_PREFIX="${'$'}app_home/.local" npm_config_prefix="${'$'}app_home/.local"; fi
-        exec "${'$'}app_home/.local/bin/${'$'}tool" "${'$'}@"
-      fi
-      # On Debian the user cannot run apt; Horus's app tiles install the
-      # system packages as root, and these need only what is already there.
-      system_packages() {
-        if command -v apk >/dev/null 2>&1; then apk add --no-cache --no-progress "${'$'}@"; else true; fi
-      }
-      install_claude() {
-        system_packages bash curl ca-certificates git libgcc libstdc++ &&
-          curl --connect-timeout 15 --max-time 300 -fsSL https://claude.ai/install.sh -o "${'$'}cache/claude-install.sh" &&
-          bash "${'$'}cache/claude-install.sh"
-      }
-      # Debian's Node.js comes from the app tile's root provisioning. Say so
-      # rather than blaming the connection.
-      node_packages() {
-        if test -x /usr/bin/node && command -v npm >/dev/null 2>&1; then return 0; fi
-        system_packages bash ca-certificates git nodejs npm libgcc libstdc++ || return 1
-        if test -x /usr/bin/node && command -v npm >/dev/null 2>&1; then return 0; fi
-        printf '%s needs Node.js, which an SSH login cannot install here. Open %s once in the Horus app, then try again.\n' "${'$'}name" "${'$'}name" >&2
-        exit 1
-      }
-      install_npm_agent() {
-        node_packages &&
-          npm install --global --force --prefix "${'$'}HOME/.local" --no-package-lock --no-audit --no-fund --no-progress --loglevel=error "${'$'}1"
-      }
-      # npm's bin links lose their execute bit under PRoot; launch the entry
-      # points through small scripts instead, as the app does.
-      write_launcher() {
-        rm -f "${'$'}launcher" &&
-          printf '#!/bin/sh\nexec %s "%s" "$@"\n' "${'$'}1" "${'$'}2" > "${'$'}launcher" &&
-          chmod 755 "${'$'}launcher"
-      }
-${CODEX_INSTALL_SCRIPT.prependIndent("      ")}
-      install_codex() {
-        node_packages && install_codex_package && write_launcher /usr/bin/node '${'$'}HOME/.local/lib/node_modules/@openai/codex/bin/codex.js'
-      }
-      install_opencode() {
-        install_npm_agent opencode-ai || return 1
-        # The package may pick a native binary named opencode.exe (it does on Alpine).
-        entry="${'$'}HOME/.local/lib/node_modules/opencode-ai/bin/opencode"
-        [ -f "${'$'}entry" ] || entry="${'$'}entry.exe"
-        test -f "${'$'}entry" && chmod u+rx "${'$'}entry" && write_launcher '' "${'$'}entry"
-      }
-      agent_ready() {
-        test -x "${'$'}launcher" && { [ "${'$'}tool" != codex ] || codex_stamped; }
-      }
-      if ! agent_ready; then
-        mkdir -p "${'$'}HOME/.local/bin" "${'$'}cache"
-        # Two sessions typing the same command install it once.
-        exec 9>"${'$'}cache/${'$'}tool-launch.lock"
-        flock 9
-        if ! agent_ready; then
-          printf '%s is not installed yet. Installing it now (first run only, needs internet)...\n' "${'$'}name" >&2
-          if ! "install_${'$'}tool" >&2 || [ ! -x "${'$'}launcher" ]; then
-            printf 'Could not install %s. Check the internet connection and try again.\n' "${'$'}name" >&2
-            exit 127
-          fi
-          printf '%s is installed.\n' "${'$'}name" >&2
-        fi
-        exec 9>&-
-      fi
-      exec "${'$'}launcher" "${'$'}@"
-      HORUS_INSTALLER
-      chmod 755 "${'$'}agent_installer.tmp"
-      mv -f "${'$'}agent_installer.tmp" "${'$'}agent_installer"
-      for agent in claude codex opencode; do
-        stub="/usr/local/bin/${'$'}agent"
-        # Never replace a real install someone put here (npm -g does).
-        if [ -e "${'$'}stub" ] && ! grep -q '^# horus-agent-stub$' "${'$'}stub" 2>/dev/null; then continue; fi
-        printf '#!/bin/sh\n# horus-agent-stub\nexec %s %s "$@"\n' "${'$'}agent_installer" "${'$'}agent" > "${'$'}stub.tmp"
-        chmod 755 "${'$'}stub.tmp"
-        mv -f "${'$'}stub.tmp" "${'$'}stub"
-      done
-      # Claude turns cross-session messaging off (with a warning) when it
-      # cannot find a uid map, which Android kernels lack; the app passes an
-      # explicit socket. Do the same for interactive SSH logins only.
-      mkdir -p /etc/zsh/zshrc.d
-      cat > /etc/zsh/zshrc.d/horus-ssh.zsh.tmp <<'HORUS_ZSH'
-${ZSH_EXIT_SCRIPT.prependIndent("      ")}
-      if [[ -n "${'$'}{SSH_CONNECTION-}" ]]; then
-        claude() {
-          case " ${'$'}* " in
-            *" --messaging-socket-path"*) command claude "${'$'}@" ;;
-            *) command claude --messaging-socket-path "/tmp/claude-messaging-${'$'}(id -u)/${'$'}${'$'}-${'$'}RANDOM.sock" "${'$'}@" ;;
-          esac
-        }
-      fi
-      HORUS_ZSH
-      mv -f /etc/zsh/zshrc.d/horus-ssh.zsh.tmp /etc/zsh/zshrc.d/horus-ssh.zsh
       # Debian's zsh reads only /etc/zsh/zshrc, not zshrc.d; load it there.
       if [ -x /usr/bin/apt-get ] && [ -f /etc/zsh/zshrc ] && ! grep -q 'horus-zshrc.d' /etc/zsh/zshrc; then
         printf '%s\n' '# horus-zshrc.d: load the snippets Horus keeps in /etc/zsh/zshrc.d' \
@@ -2338,16 +1375,10 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
     private val USERNAME_PATTERN = Regex("[A-Za-z0-9._-]{1,32}")
 
     /**
-     * BusyBox top's global proc reads; per-process files are never replaced.
-     * Fallback values are intentionally synthetic and non-authoritative: they
-     * make the applet parse and render live process rows, but do not claim
-     * real global CPU, memory, or load metrics.
-     */
     /**
-     * Stand-ins for global /proc files Android hides from apps. /proc/stat
-     * carries every line /proc/stat parsers require, and a real `btime`:
-     * tools such as Codex turn a process's start time (in ticks since boot,
-     * from /proc/<pid>/stat) into a date with it, and fail without it.
+     * Stand-ins for global /proc files Android hides from apps: /proc/stat
+     * (with a real `btime`) and loadavg, so BusyBox top and other tools
+     * parse and render without claiming real global metrics.
      */
     internal fun procGlobalFiles(bootTimeSeconds: Long): List<Pair<String, String>> = listOf(
       "stat" to """
