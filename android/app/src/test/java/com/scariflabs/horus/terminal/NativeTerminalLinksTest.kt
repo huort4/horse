@@ -112,10 +112,10 @@ class NativeTerminalLinksTest {
     // spaces, so the URL is split by real line breaks.
     val engine = NativeTerminalEngine("s-links-indented", 6, 20) { _, _ -> }
     try {
-      val output = "x (https://example.example\r\n  /code/artifact/7f1\r\n  07076). Done\r\n"
+      val output = "x (https://example.com\r\n  /code/artifact/7f1\r\n  07076). Done\r\n"
       assertTrue(engine.enqueue(1L, output.toByteArray(StandardCharsets.UTF_8)))
       val frame = awaitFrame(engine) { it.lines.any { line -> line.text[2] == "0" } }
-      val url = "https://example.example/code/artifact/7f107076"
+      val url = "https://example.com/code/artifact/7f107076"
       assertEquals(url, NativeTerminalLinks.urlAt(frame.lines, 0, 5))
       assertEquals(url, NativeTerminalLinks.urlAt(frame.lines, 1, 2))
       assertEquals(url, NativeTerminalLinks.urlAt(frame.lines, 2, 6))
