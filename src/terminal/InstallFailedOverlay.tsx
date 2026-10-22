@@ -4,7 +4,7 @@ import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 import {UI_FONT_FAMILY} from '../ui/typography';
 import {HORUS_ISSUES_URL} from './AppExitedOverlay';
-import {HarnessMark} from './harnessLogos';
+import {BrandMark} from './BrandMark';
 import {installFailureCopy, type InstallFailure} from './installFailure';
 import {uiColors} from './palette';
 import {toolchainInstallLabel} from './toolchainLabels';
@@ -54,7 +54,7 @@ export function InstallFailedOverlay({failure, toolchain, onRetry, onReport, onB
     <View style={styles.overlay} testID="terminal-install-failed">
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.content}>
-          <HarnessMark size={48} toolchain={toolchain} />
+          <BrandMark accessible={false} size={48} />
           <Text style={styles.title}>{copy.title}</Text>
           <Text style={styles.reason} testID="terminal-install-failed-reason">{copy.reason}</Text>
           <Text style={styles.advice} testID="terminal-install-failed-advice">{copy.advice}</Text>

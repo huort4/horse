@@ -147,7 +147,7 @@ internal object NativeTerminalLinks {
 
   /**
    * One logical line built from wrapped rows. A continuation row's leading
-   * indent is left out, since apps that wrap their own text (Claude Code)
+   * indent is left out, since apps that wrap their own text
    * indent the next row. [row] and [column] map each joined cell back.
    */
   private class Joined(val text: Array<String>, val width: ByteArray, val row: IntArray, val column: IntArray) {
@@ -202,7 +202,7 @@ internal object NativeTerminalLinks {
     return Int.MAX_VALUE
   }
 
-  /** Deepest indent a continuation row may have, e.g. Claude Code's two-space margin. */
+  /** Deepest indent a continuation row may have, e.g. a two-space margin. */
   private const val MAX_CONTINUATION_INDENT = 8
 
   /** True when [row] runs to its last cell and the next row starts with text. */

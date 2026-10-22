@@ -95,8 +95,8 @@ class NativeTerminalEngineBenchmark {
   }
 
   /**
-   * Full-screen redraws as Claude Code / Codex emit them: each frame is a
-   * DEC 2026 synchronized update that homes each row, clears it, and paints
+   * Full-screen redraws as an alternate-screen app emits them: each frame is
+   * a DEC 2026 synchronized update that homes each row, clears it, and paints
    * styled spans.
    */
   private fun redrawStream(targetBytes: Int): ByteArray {

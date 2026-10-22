@@ -40,7 +40,6 @@ class ProotSessionLauncher(
   private val hardlinkDir: File = File(scratchDir.absoluteFile.parentFile, "l"),
 ) {
 
-
   data class LaunchSpec(
     val argv: List<String>,
     val environment: List<String>,
@@ -88,7 +87,7 @@ class ProotSessionLauncher(
     },
   )
 
-  /** Runs the requested shell or harness bootstrap as root before its session. */
+  /** Runs the requested shell bootstrap as root before its session. */
   fun toolchainProvisionLaunchSpec(
     rootfsDir: File,
     guestHomeDir: File,
@@ -123,7 +122,7 @@ class ProotSessionLauncher(
     provision: Boolean = true,
     /**
      * Starts the root helper behind `sudo` before the session drops to its
-     * user. Only the profile user's own sessions get it, never a harness's.
+     * user.
      */
     rootHelper: Boolean = false,
   ): LaunchSpec {
@@ -395,7 +394,11 @@ class ProotSessionLauncher(
     }
   }
 
-  /** Writes a file into the rootfs, refusing to follow symlinks on the way. */
+  /**
+   * Writes one file into the rootfs. The guest owns the rootfs, so a
+   * directory on the way may be a symlink planted there; never write through
+   * one, or the app could overwrite its own files.
+   */
   private fun writeGuestFile(rootfsDir: File, guestPath: String, content: ByteArray, executable: Boolean) {
     var directory = rootfsDir
     guestPath.trim('/').split('/').dropLast(1).forEach { part ->
@@ -514,6 +517,7 @@ class ProotSessionLauncher(
     }
   }
 
+  /** Adds one bounded non-root identity to the active Alpine rootfs. */
   private fun prepareGuestAccount(rootfsDir: File, username: String, uid: Int, gid: Int) {
     synchronized(GUEST_ACCOUNT_MUTATION_LOCK) {
       prepareGuestAccountLocked(rootfsDir, username, uid, gid)
@@ -874,16 +878,12 @@ class ProotSessionLauncher(
     require(TerminalRuntimeContract.isValidToolchainTarget(target)) { "toolchain target is invalid" }
     val rootfsZsh = listOf(File(rootfsDir, "bin/zsh"), File(rootfsDir, "usr/bin/zsh"))
       .any { it.isFile && it.canExecute() }
-    val userBin = File(guestHomeDir, ".local/bin")
     if (!rootfsZsh) return false
     if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL) return hasBaseUtilities(rootfsDir)
     val readyMarker = File(guestHomeDir, ".cache/horus/$target.ready")
-    if (target == TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB) {
-      val rootfsGh = listOf(File(rootfsDir, "bin/gh"), File(rootfsDir, "usr/bin/gh"))
-        .any { it.isFile && it.canExecute() }
-      return rootfsGh && readyMarker.isFile
-    }
-    return false
+    val rootfsGh = listOf(File(rootfsDir, "bin/gh"), File(rootfsDir, "usr/bin/gh"))
+      .any { it.isFile && it.canExecute() }
+    return rootfsGh && readyMarker.isFile
   }
 
   private fun hasBaseUtilities(rootfsDir: File): Boolean =
@@ -922,7 +922,6 @@ class ProotSessionLauncher(
     private const val ZSHRC_NAME = ".zshrc"
     private const val MAX_PROFILE_BYTES = 256 * 1024L
     private const val MAX_ZSHRC_BYTES = 256 * 1024L
-    private const val MAX_AGENT_INSTRUCTIONS_BYTES = 256 * 1024L
     private const val MAX_SESSION_COMMAND_LENGTH = 4096
     private const val MAX_GUEST_ID = 65_533
     const val ZSH_PROFILE_BEGIN = "# BEGIN HORUS_ZSH_V1"
@@ -976,7 +975,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       if [[ "${'$'}{HORUS_BOOTSTRAP:-}" == 1 ]]; then
         # Keep the first launcher command invisible while the React Native
         # side waits for this prompt. buildZshCommand restores echo before
-        # handing control to zsh or the selected harness.
+        # handing control to zsh.
         stty -echo 2>/dev/null || true
         unset HORUS_BOOTSTRAP
       fi
@@ -986,6 +985,9 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       PS2='%F{blue}>%f '
       $ZSHRC_END
     """.trimIndent()
+    // Points apk at the chosen mirror. Each repository line keeps its branch
+    // and name (v3.24/main); only the server in front of it changes. The
+    // mirror URL is validated by DownloadSources and cannot contain '@'.
     internal val APK_MIRROR_SCRIPT = """
       if [ -n "${'$'}{HORUS_ALPINE_MIRROR:-}" ] && [ -w /etc/apk/repositories ]; then
         sed -i -E "s@^[^#]*/(v[0-9]+\.[0-9]+|edge)/([a-z]+)/?\${'$'}@${'$'}HORUS_ALPINE_MIRROR/\1/\2@" /etc/apk/repositories || true
@@ -997,13 +999,13 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
      * same script serves either rootfs. apt runs as root under PRoot, where
      * it cannot drop to its _apt sandbox user, and refreshes its lists at
      * most once a day.
-
+     */
     internal val PACKAGE_MANAGER_SCRIPT = """
       if [ -x /usr/bin/apt-get ]; then
         horus_pkg=apt
         # Debian splits venv (and its ensurepip) out of python3.
         pkgs_shell="ca-certificates curl git jq less openssh-client python3 python3-venv ripgrep tzdata zsh"
-        pkgs_github="gh git openssh-client zsh"
+        pkgs_github="ca-certificates curl git gh zsh"
         has_python_venv() {
           for venv_dir in /usr/lib/python3.*/ensurepip; do [ -d "${'$'}venv_dir" ] && return 0; done
           return 1
@@ -1011,7 +1013,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       else
         horus_pkg=apk
         pkgs_shell="ca-certificates curl gcompat git jq less openssh-client-default python3 ripgrep tzdata zsh"
-        pkgs_github="gh git openssh-client-default zsh"
+        pkgs_github="ca-certificates curl git github-cli zsh"
         has_python_venv() { true; }
       fi
       # The latest progress line, for the app to show while tools install.
@@ -1067,9 +1069,6 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         return "${'$'}pkg_result"
       }
     """.trimIndent()
-    // npm may successfully install the JS wrapper while skipping its optional
-    // native package. Install the exact declared alias as a required package
-    // on recovery; both Linux layouts contain Alpine-compatible musl binaries.
     private val TOOLCHAIN_PROVISION_SCRIPT = """
       set -eu
       export HOME=/root
@@ -1150,7 +1149,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
             fi
           fi
         fi
-      elif [ "${'$'}target" = github ]; then
+      else
         if ! command -v zsh >/dev/null 2>&1 || ! command -v gh >/dev/null 2>&1 || [ ! -f /root/.cache/horus/github.ready ]; then
           mark_provision_stage github
           if ! pkg_install /root/.cache/horus/github-install.log ${'$'}pkgs_github; then
@@ -1160,6 +1159,7 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
             fi
           fi
         fi
+      fi
       # sudo's root helper is Python. The Bare terminal installs it with its
       # tools; install it with whatever opens first, so sudo works from the
       # first sign-in. A failure leaves sudo unavailable, not the app.
@@ -1169,7 +1169,6 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
       mark_provision_stage base_ready
 
       target_marker=/root/.cache/horus/${'$'}target.ready
-
       mark_provision_stage verify
       if [ "${'$'}target" = shell ]; then
         test -x /bin/zsh || test -x /usr/bin/zsh
@@ -1179,15 +1178,12 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         /usr/bin/jq --version >/dev/null 2>&1
         /usr/bin/python3 --version >/dev/null 2>&1
         test -e /lib/ld-linux-aarch64.so.1
-      elif [ "${'$'}target" = github ]; then
+      else
         test -x /bin/gh || test -x /usr/bin/gh
-      fi
-      if [ "${'$'}target" != shell ]; then
         printf '%s\n' ready > "${'$'}target_marker"
       fi
       mark_provision_stage ready
-
-      printf '%s\n\033[1A\033[2K' HORUS_TOOLCHAIN_READY
+      printf '%s\n\\033[1A\\033[2K' HORUS_TOOLCHAIN_READY
     """.trimIndent()
     private val TOOLCHAIN_SESSION_SCRIPT = """
       set -eu
@@ -1205,8 +1201,8 @@ ${ZSH_EXIT_SCRIPT.prependIndent("      ")}
         $APK_MIRROR_SCRIPT
         printf '%s\n\033[1A\033[2K' HORUS_TOOLCHAIN_READY
       fi
-      # The install log has done its job; start the app on a clean screen
-      # with no scrollback, as apps like Claude Code draw inline below it.
+      # The install log has done its job; start the session on a clean screen
+      # with no scrollback.
       printf '\033[H\033[2J\033[3J'
       # Markers stay exact output lines for the app's scanners; the trailing
       # cursor-up + erase-line keeps them off the user's screen.
@@ -1338,6 +1334,11 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
       mv -f "${'$'}login_shell.tmp" "${'$'}login_shell"
       grep -qx "${'$'}login_shell" /etc/shells 2>/dev/null || echo "${'$'}login_shell" >> /etc/shells
       sed -i "s#^\(${'$'}user:[^:]*:${'$'}uid:${'$'}gid:[^:]*:[^:]*:\).*#\1${'$'}login_shell#" /etc/passwd
+      mkdir -p /etc/zsh/zshrc.d
+      cat > /etc/zsh/zshrc.d/horus-ssh.zsh.tmp <<'HORUS_ZSH'
+${ZSH_EXIT_SCRIPT.prependIndent("      ")}
+      HORUS_ZSH
+      mv -f /etc/zsh/zshrc.d/horus-ssh.zsh.tmp /etc/zsh/zshrc.d/horus-ssh.zsh
       # Debian's zsh reads only /etc/zsh/zshrc, not zshrc.d; load it there.
       if [ -x /usr/bin/apt-get ] && [ -f /etc/zsh/zshrc ] && ! grep -q 'horus-zshrc.d' /etc/zsh/zshrc; then
         printf '%s\n' '# horus-zshrc.d: load the snippets Horus keeps in /etc/zsh/zshrc.d' \
@@ -1375,10 +1376,16 @@ ${DOTNET_ENV_SCRIPT.prependIndent("      ")}
     private val USERNAME_PATTERN = Regex("[A-Za-z0-9._-]{1,32}")
 
     /**
+     * BusyBox top's global proc reads; per-process files are never replaced.
+     * Fallback values are intentionally synthetic and non-authoritative: they
+     * make the applet parse and render live process rows, but do not claim
+     * real global CPU, memory, or load metrics.
+     */
     /**
-     * Stand-ins for global /proc files Android hides from apps: /proc/stat
-     * (with a real `btime`) and loadavg, so BusyBox top and other tools
-     * parse and render without claiming real global metrics.
+     * Stand-ins for global /proc files Android hides from apps. /proc/stat
+     * carries every line /proc/stat parsers require, and a real `btime`:
+     * tools turn a process's start time (in ticks since boot, from
+     * /proc/<pid>/stat) into a date with it, and fail without it.
      */
     internal fun procGlobalFiles(bootTimeSeconds: Long): List<Pair<String, String>> = listOf(
       "stat" to """

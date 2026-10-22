@@ -8,11 +8,11 @@
 
 <div align="center">
 
-<p><img src="docs/readme/banner.png" width="880" alt="Horus: the Eye of Horus above the name HORUS and the Claude Code, Codex, OpenCode, and shell marks"></p>
+<p><img src="docs/readme/banner.png" width="880" alt="Horus: the Eye of Horus above the name HORUS"></p>
 
 <br>
 
-**Claude Code, Codex, and OpenCode in a real Linux terminal on your Android phone.**
+**A real Linux terminal on your Android phone, with zsh, git, and the GitHub CLI.**
 
 No root. No Termux. Open source.
 
@@ -29,8 +29,8 @@ No root. No Termux. Open source.
 <br>
 
 <img src="docs/screenshots/launcher.png" width="180" alt="Horus home screen">&nbsp;
-<img src="docs/screenshots/claude.png" width="180" alt="Claude Code running in Horus">&nbsp;
-<img src="docs/screenshots/codex.png" width="180" alt="Codex editing and testing code in Horus">&nbsp;
+<img src="docs/screenshots/shell.png" width="180" alt="A zsh session running in Horus">&nbsp;
+<img src="docs/screenshots/projects.png" width="180" alt="The project hub in Horus">&nbsp;
 <img src="docs/screenshots/ffmpeg.png" width="180" alt="ffmpeg encoding 1080p video in the Horus shell">
 
 </div>
@@ -38,13 +38,11 @@ No root. No Termux. Open source.
 <br>
 
 Horus gives your phone a full Alpine Linux ARM64 workspace and a proper
-terminal to drive it, then puts the coding agents one tap away. Pick Claude
-Code, Codex, OpenCode, or a plain zsh shell, point it at a project, and let it
-work; sessions keep running with the screen off.
+terminal to drive it. Open a zsh shell or the GitHub CLI, point it at a
+project, and keep working; sessions keep running with the screen off.
 
-For the launch demo, Claude Code downloaded a film, installed ffmpeg, and cut
-a trailer, while Codex trained a neural network from scratch to 97.97% on
-MNIST. Both ran on a budget phone from 2021.
+For the launch demo, a shell session downloaded a film, installed ffmpeg, and
+cut a trailer on a budget phone from 2021.
 
 <p align="center">𓋹 &nbsp; 𓊽 &nbsp; 𓌀 &nbsp; 𓂀 &nbsp; 𓌀 &nbsp; 𓊽 &nbsp; 𓋹</p>
 
@@ -56,8 +54,8 @@ MNIST. Both ran on a budget phone from 2021.
    keep your data.
 2. **Open Horus and set a password.** It downloads Alpine Linux (a few MB) and
    sets up the workspace.
-3. **Tap an agent.** It installs on first open, and you sign in to your
-   account inside the agent itself.
+3. **Tap a terminal.** The shell and the GitHub CLI install on first open;
+   sign in to GitHub with a device code if you need it.
 
 You need an ARM64 phone on Android 7.0 or newer. New to all this? The
 [beginner's guide](https://scariflabs.com/horus/docs) starts from zero.
@@ -75,9 +73,9 @@ need them, and `apk add` gets you the rest.
 </td></tr>
 <tr><td>
 
-### 𓁟 Agents in one tap
-Claude Code, Codex, and OpenCode each install into their own home the first
-time you open them, with the installer output right there in the terminal.
+### 𓁟 Tools in one tap
+zsh, git, ripgrep, jq, curl, python3, and the GitHub CLI install on first open,
+with the installer output right there in the terminal.
 
 </td></tr>
 <tr><td>
@@ -92,8 +90,8 @@ leaves out.
 
 ### 𓊽 Sessions that outlive the app
 Terminals run in a foreground service in their own process. Switch apps, lock
-the phone, let Android kill the UI; the agent keeps going and notifies you
-when it's waiting on you.
+the phone, let Android kill the UI; the shell keeps going, and a session that
+finishes a long command notifies you.
 
 </td></tr>
 <tr><td>
@@ -108,7 +106,7 @@ and a read-only file browser previews it and copies folders to Downloads.
 
 ### 𓂀 Private by default
 No analytics, ads, crash reporting, or Google services. A password locks the
-app after 15 minutes in the background, and Horus never touches your agent
+app after 15 minutes in the background, and Horus never touches your CLI
 credentials.
 
 </td></tr>
@@ -149,18 +147,14 @@ Kotlin native layer (android/app/src/main/java/com/scariflabs/horus/terminal)
 terminal_pty.c (JNI) ── PRoot (native/, built from source) ── Alpine rootfs
 ```
 
-Each agent runs as its own guest user (UIDs 61001–61003) with a private home,
-and they all share workspace GID 1000 so they can work on the same projects.
+Each profile runs as its own guest user with a private home, and every profile
+shares workspace GID 1000 so sessions can work on the same projects.
 
 ## 𓅃 Security notes
 
 Android's app sandbox is the only real security boundary. PRoot emulates user
-IDs but gives no kernel isolation between agent users, so don't run code you
+IDs but gives no kernel isolation between guest users, so don't run code you
 don't trust.
-
-Codex's own Linux sandbox doesn't work under PRoot, which is why the shell
-wraps `codex` with `--sandbox danger-full-access`; Codex's approval prompts
-still apply.
 
 Remote access stays off until you pair a computer or turn it on. Any app on
 the phone can reach loopback ports, so the paired key is what keeps others
@@ -233,11 +227,11 @@ pinned toolchain, local commands, required checks, and release acceptance.
 
 | Permission | Why |
 | :-- | :-- |
-| `INTERNET`, `ACCESS_NETWORK_STATE` | Download Alpine, packages, and agents; show network state on the home screen |
+| `INTERNET`, `ACCESS_NETWORK_STATE` | Download Alpine and its packages; show network state on the home screen |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Keep terminal sessions running in a separate `:terminal` process while the UI is closed |
-| `POST_NOTIFICATIONS` | One notification per running session, and "waiting for you" when an agent finishes a turn |
+| `POST_NOTIFICATIONS` | One notification per running session |
 | `WAKE_LOCK` | Keep the CPU awake while a session is running |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Asked for during setup so Android doesn't pause long agent runs |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Asked for during setup so Android doesn't pause long sessions |
 | `VIBRATE` | Short haptic feedback on button taps |
 | `WRITE_EXTERNAL_STORAGE` (API ≤ 28 only) | Copy a folder to `Download/Horus` on old Android versions |
 
@@ -268,12 +262,8 @@ in fdroiddata. New versions are picked up automatically from `vX.Y.Z` tags.
 
 **Anti-features**
 
-- **NonFreeNet.** Horus downloads Alpine Linux, its packages, and the coding
-  agents from their upstream servers. Claude Code and Codex need accounts with
-  their providers.
-- **NonFreeAdd.** Horus offers to install Claude Code, which is proprietary.
-  Codex (Apache-2.0), OpenCode, and the plain shell are free software. Horus
-  never handles provider credentials; sign-in happens inside each CLI.
+- **NonFreeNet.** Horus downloads Alpine Linux, its packages, and the GitHub
+  CLI from their upstream servers. The GitHub CLI needs a GitHub account.
 
 **Built from source**
 
@@ -299,8 +289,8 @@ No binaries are committed except `android/gradle/wrapper/gradle-wrapper.jar`.
 **Runtime downloads:** a pinned Alpine minirootfs from
 `dl-cdn.alpinelinux.org`, checked against a SHA-256 in
 [`AlpineRootfsCatalog.kt`](android/app/src/main/java/com/scariflabs/horus/terminal/AlpineRootfsCatalog.kt),
-then Alpine packages, then each agent from its publisher the first time it is
-opened.
+then Alpine packages, then the GitHub CLI from its publisher the first time it
+is opened.
 
 </details>
 
@@ -323,7 +313,7 @@ and the [security policy](.github/SECURITY.md) before reporting a vulnerability.
 ## License
 
 [MIT](LICENSE). Bundled third-party components (xterm.js, PRoot, talloc,
-libandroid-shmem, fonts, agent marks) are listed with their licenses in
+libandroid-shmem, fonts) are listed with their licenses in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 <div align="center">

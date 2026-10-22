@@ -136,7 +136,7 @@ class ProfileUsersCoreTest {
     for (name in listOf("vishesh", "horus", "dev_1", "_x", "a-b")) {
       assertTrue(name, ProfileUsersCore.isValidUsername(name))
     }
-    for (name in listOf("", "Vishesh", "1abc", "root", "nobody", "www-data", "_apt", "harness_claude", "a b", "x".repeat(33), "../x")) {
+    for (name in listOf("", "Vishesh", "1abc", "root", "nobody", "www-data", "_apt", "a b", "x".repeat(33), "../x")) {
       assertFalse(name, ProfileUsersCore.isValidUsername(name))
     }
     assertEquals(ProfileUsersCore.CreateResult.INVALID_USERNAME, users.create(alpine, "root", "falcon", "pass"))

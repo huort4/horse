@@ -31,8 +31,8 @@ afterEach(async () => {
 
 test('keeps explicitly positioned spaces and independent TUI columns', async () => {
   const {output, lines, buffer} = setup();
-  await output('\x1b[2J\x1b[HWelcome', '\x1b[1;9Hto', '\x1b[1;12HCodex', '\x1b[3;2H1. Start', '\x1b[3;24HEnter');
-  expect(lines()).toEqual(['Welcome to Codex', '', ' 1. Start              Enter', '', '', '']);
+  await output('\x1b[2J\x1b[HWelcome', '\x1b[1;9Hto', '\x1b[1;12HHorus', '\x1b[3;2H1. Start', '\x1b[3;24HEnter');
+  expect(lines()).toEqual(['Welcome to Horus', '', ' 1. Start              Enter', '', '', '']);
   expect(buffer.snapshot().cursor).toEqual({row: 2, column: 28, visible: true});
   expect(buffer.snapshot().lines.every(line => line.text.length === 40)).toBe(true);
 });
@@ -145,13 +145,13 @@ test('uses scrolling margins and origin mode without moving the header/footer', 
 test('preserves normal scrollback/cursor across alternate-screen entry, resize, and exit', async () => {
   const {output, lines, buffer} = setup(4, 12);
   await output('shell\r\nprompt> ');
-  await output('\x1b[?1049h\x1b[2J\x1b[HClaude Code\x1b[3;2HOpenCode\x1b[?25l');
+  await output('\x1b[?1049h\x1b[2J\x1b[HFull screen\x1b[3;2HText\x1b[?25l');
   expect(buffer.snapshot().alternate).toBe(true);
-  expect(lines()).toEqual(['Claude Code', '', ' OpenCode', '']);
+  expect(lines()).toEqual(['Full screen', '', ' Text', '']);
   expect(buffer.snapshot().cursor.visible).toBe(false);
   buffer.resize({rows: 6, columns: 16});
   await jest.runAllTimersAsync();
-  expect(lines()).toEqual(['Claude Code', '', ' OpenCode', '', '', '']);
+  expect(lines()).toEqual(['Full screen', '', ' Text', '', '', '']);
   await output('\x1b[?1049l\x1b[?25h');
   expect(buffer.snapshot().alternate).toBe(false);
   expect(lines()).toEqual(['shell', 'prompt>', '', '', '', '']);

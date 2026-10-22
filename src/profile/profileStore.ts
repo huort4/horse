@@ -73,7 +73,7 @@ export function usernameProblem(username: string): string | undefined {
   if (!USERNAME_PATTERN.test(username)) {
     return 'Use lowercase letters, digits, _ or -, starting with a letter.';
   }
-  if (RESERVED_USERNAMES.has(username) || username.startsWith('harness_')) {
+  if (RESERVED_USERNAMES.has(username)) {
     return 'That name belongs to a system account. Pick another.';
   }
   return undefined;

@@ -356,7 +356,7 @@ export async function readProvisionProgress(
   }
 }
 
-/** Provisions only the shell or harness requested for the first launch. */
+/** Provisions only the shell or GitHub CLI requested for the first launch. */
 export async function provisionAlpineToolchain(
   requestId: string,
   target: TerminalToolchainTarget,

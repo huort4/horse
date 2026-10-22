@@ -2,7 +2,7 @@ import React from 'react';
 import {ActivityIndicator, StyleSheet, Text, View} from 'react-native';
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import {UI_FONT_FAMILY} from '../ui/typography';
-import {HarnessMark} from './harnessLogos';
+import {BrandMark} from './BrandMark';
 import {uiColors} from './palette';
 import {toolchainInstallLabel} from './toolchainLabels';
 
@@ -28,7 +28,7 @@ export function lastInstallStage(text: string): string | undefined {
   return stage;
 }
 
-// "Downloading Codex… 37% (90 of 243 MB)" when the script knows the download
+// "Downloading packages… 37% (90 of 243 MB)" when the script knows the download
 // size, else "… 84 MB"; system packages report "Downloading packages… 37%"
 // and then "Installing packages… 64%".
 const PROGRESS_PATTERN = /(Downloading|Installing) [^\r\n]*… (?:(\d+)%|(\d+) MB)/g;
@@ -63,7 +63,7 @@ export function InstallProgressOverlay({download, step, toolchain}: InstallProgr
     return (
       <View style={styles.overlay} testID="terminal-startup-progress">
         <View style={styles.content}>
-          <HarnessMark size={56} toolchain={toolchain} />
+          <BrandMark accessible={false} size={56} />
           <Text style={styles.title}>Starting {label}</Text>
           <ActivityIndicator color={uiColors.accent} style={styles.spinner} />
         </View>
@@ -73,7 +73,7 @@ export function InstallProgressOverlay({download, step, toolchain}: InstallProgr
   return (
     <View style={styles.overlay} testID="terminal-install-progress">
       <View style={styles.content}>
-        <HarnessMark size={56} toolchain={toolchain} />
+        <BrandMark accessible={false} size={56} />
         <Text style={styles.title}>Setting up {label}</Text>
         <Text style={styles.subtitle}>First launch only. This can take a few minutes on a slow connection.</Text>
         <View accessibilityLiveRegion="polite" style={styles.steps}>

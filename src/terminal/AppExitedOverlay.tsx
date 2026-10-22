@@ -3,7 +3,7 @@ import {ScrollView, StyleSheet, Text, View} from 'react-native';
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 import {UI_FONT_FAMILY} from '../ui/typography';
-import {HarnessMark} from './harnessLogos';
+import {BrandMark} from './BrandMark';
 import {uiColors} from './palette';
 import {toolchainInstallLabel} from './toolchainLabels';
 
@@ -36,7 +36,7 @@ export function appExitKind(toolchain: TerminalToolchainTarget, exit: AppExit): 
   // Keep real Go/PRoot faults reportable; ENOSPC is an actionable storage error.
   if (/panic:|fatal error:|unexpected escape sequence/i.test(output) ||
     (/proot error:/i.test(output) && !/no space left on device/i.test(output))) return 'unexpected';
-  return toolchain === 'github' || toolchain === 'shell' ? 'command_failed' : 'unexpected';
+  return 'command_failed';
 }
 
 export function commandExitAdvice(toolchain: TerminalToolchainTarget, exit: AppExit): string {
@@ -96,7 +96,7 @@ export function AppExitedOverlay({exit, toolchain, onRestart, onReport, onBack}:
   return (
     <View style={styles.overlay} testID="terminal-app-exited">
       <View style={styles.content}>
-        <HarnessMark size={48} toolchain={toolchain} />
+        <BrandMark accessible={false} size={48} />
         <Text style={styles.title}>{kind === 'closed' ? `${label} closed` : kind === 'command_failed' ? `${label} command failed` : kind === 'interrupted' ? `${label} interrupted` : `${label} quit unexpectedly`}</Text>
         {detail === undefined ? null : <Text style={styles.detail} testID="terminal-app-exited-detail">{detail}</Text>}
         {kind === 'command_failed' || kind === 'interrupted' ? <Text style={styles.advice} testID="terminal-app-exited-advice">{commandExitAdvice(toolchain, exit)}</Text> : null}

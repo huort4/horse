@@ -3,7 +3,7 @@ import {ActivityIndicator, StyleSheet, Text, View} from 'react-native';
 import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import {UI_FONT_FAMILY} from '../ui/typography';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
-import {HarnessMark} from './harnessLogos';
+import {BrandMark} from './BrandMark';
 import type {TerminalSessionClient} from './session/sessionClient';
 import type {ActiveTerminalSession} from './session/sessionContract';
 import {formatSessionAge, sessionTitle, toolchainInstallLabel} from './toolchainLabels';
@@ -92,8 +92,8 @@ export function SessionLimitOverlay({client, visible, toolchain, onSessionFreed,
   return (
     <View pointerEvents="auto" style={styles.overlay} testID="session-limit-warning-overlay">
       <View style={styles.content} testID="session-limit-warning">
-        <HarnessMark size={48} toolchain={toolchain} />
-        <Text style={styles.title} testID="session-limit-warning-title">Close an app to open {label}</Text>
+        <BrandMark accessible={false} size={48} />
+        <Text style={styles.title} testID="session-limit-warning-title">Close a session to open {label}</Text>
         <Text style={styles.detail} testID="session-limit-warning-message">
           {limit === undefined
             ? 'You can change how many run at once in Settings.'
@@ -106,7 +106,7 @@ export function SessionLimitOverlay({client, visible, toolchain, onSessionFreed,
             const title = sessionTitle(session);
             return (
               <View key={session.sessionId} style={styles.row} testID={`session-limit-session-${session.sessionId}`}>
-                <HarnessMark size={28} toolchain={session.toolchain} />
+                <BrandMark accessible={false} size={28} />
                 <View style={styles.rowCopy}>
                   <Text numberOfLines={1} style={styles.rowTitle} testID={`session-limit-session-title-${session.sessionId}`}>{title}</Text>
                   <Text numberOfLines={1} style={styles.rowMeta} testID={`session-limit-session-meta-${session.sessionId}`}>Running {formatSessionAge(session.startedAtMs)}</Text>

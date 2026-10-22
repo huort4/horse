@@ -13467,7 +13467,7 @@
     }
    ]
   },
-  "claude-code-glyphs": {
+  "fullwidth-line-glyphs": {
    "input": "⏺✻⎿●◯▶│─╭╮✔✗x",
    "splitAt": [],
    "rows": 2,
@@ -14470,7 +14470,7 @@
     }
    ]
   },
-  "claude-cell-diff-update": {
+  "cell-diff-update": {
    "input": "\u001b[?2026h\u001b[?25l> hello\r\n  status\u001b[1A\u001b[3GHE\u001b[1B\u001b[9G!\u001b[?25h\u001b[?2026l",
    "splitAt": [],
    "rows": 4,
@@ -15233,7 +15233,7 @@
     }
    ]
   },
-  "opencode-truecolor-fill": {
+  "truecolor-fill": {
    "input": "\u001b[?1049h\u001b[?1000h\u001b[?1006h\u001b[48;2;20;20;30m\u001b[H\u001b[2J\u001b[2;3H\u001b[38;2;200;200;200mhi\u001b[K\u001b[0m",
    "splitAt": [],
    "rows": 3,

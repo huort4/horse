@@ -21,7 +21,7 @@ export type NativeTerminalFrameMeta = Readonly<{
 
 export type NativeTerminalCanvasProps = ViewProps & Readonly<{
   frame?: TerminalFrame;
-  /** Native harness sessions render directly from the Android engine. */
+  /** Native terminal sessions render directly from the Android engine. */
   sessionId?: string;
   nativeRows?: number;
   nativeColumns?: number;

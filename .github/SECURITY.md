@@ -30,8 +30,8 @@ personal information; arrange any necessary sensitive evidence privately.
 
 The [README security notes](../README.md#security-notes) describe the runtime's
 limits. Android's application sandbox is the security boundary; PRoot does not
-provide kernel isolation between agent users. Codex runs with its Linux sandbox
-disabled under PRoot. Treat commands, repositories, and agent actions accordingly.
+provide kernel isolation between guest users. Treat commands, repositories, and
+anything you run in a session accordingly.
 Optional remote access relies on paired SSH keys and the documented USB setup.
 
 The project does not publish a formal security support window. State the version

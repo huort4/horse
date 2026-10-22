@@ -44,9 +44,10 @@ body:
     attributes:
       label: Affected agent or component
       options:
-        - Claude Code
-        - Codex
-        - OpenCode
+        - Bare terminal
+        - GitHub CLI
+        - Remote Access
+        - Files
         - Plain shell / terminal
         - Workspace setup / downloads
         - Projects / GitHub CLI

@@ -13,7 +13,6 @@ data class DistroStorePaths(val base: File) {
   val activeRecord: File get() = File(distro, "active.json")
   val versions: File get() = File(distro, "versions")
   val home: File get() = File(base, "home")
-  val harnessHomes: File get() = File(base, "harness-homes")
   val defaultWorkspace: File get() = File(base, "workspaces/default")
   val downloadsIncoming: File get() = File(base, "downloads/incoming")
   val downloadsCache: File get() = File(base, "downloads/cache")
@@ -30,11 +29,6 @@ data class DistroStorePaths(val base: File) {
   fun versionStaging(rootfsId: String): File = File(versions, "$rootfsId.tmp")
   fun versionReplacement(rootfsId: String): File = File(versions, ".$rootfsId.replace.tmp")
 
-  fun harnessHome(harness: String): File {
-    require(harness in HARNESS_HOME_KEYS) { "harness home key is invalid" }
-    return File(harnessHomes, harness)
-  }
-
   /** Every distribution other than Alpine keeps its users' homes under here. */
   val distroHomes: File get() = File(base, "homes")
 
@@ -45,13 +39,6 @@ data class DistroStorePaths(val base: File) {
    */
   fun homeFor(distro: String): File =
     if (distro == RootfsCatalog.DISTRO_ALPINE) home else File(File(distroHomes, safeDistro(distro)), "home")
-
-  /** [distro]'s home for one harness account, separate per distribution like [homeFor]. */
-  fun harnessHomeFor(distro: String, harness: String): File {
-    if (distro == RootfsCatalog.DISTRO_ALPINE) return harnessHome(harness)
-    require(harness in HARNESS_HOME_KEYS) { "harness home key is invalid" }
-    return File(File(File(distroHomes, safeDistro(distro)), "harness-homes"), harness)
-  }
 
   /** The user home of every distribution Horus knows, Alpine first. */
   fun userHomes(): List<File> = RootfsCatalog.entries.map { it.distro }.distinct().map(::homeFor)
@@ -66,13 +53,8 @@ data class DistroStorePaths(val base: File) {
 
   /** Every directory the storage contract defines, parents first. */
   fun allDirectories(): List<File> = listOf(
-    base, distro, versions, home, harnessHomes,
-    *HARNESS_HOME_KEYS.map(::harnessHome).toTypedArray(),
+    base, distro, versions, home,
     defaultWorkspace, downloadsIncoming,
     downloadsCache, sessions, guestTmp, hardlinks, diagnostics,
   )
-
-  companion object {
-    val HARNESS_HOME_KEYS = listOf("claude", "codex", "opencode")
-  }
 }

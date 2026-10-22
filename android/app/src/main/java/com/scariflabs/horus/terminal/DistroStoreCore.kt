@@ -385,25 +385,11 @@ class DistroStoreCore(
     var removedHome = false
     var removedWorkspaces = false
     if (deleteHome) {
-      removedHome = paths.home.exists() || paths.harnessHomes.exists() || paths.distroHomes.exists()
+      removedHome = paths.home.exists() || paths.distroHomes.exists()
       deleteTreeIfPresent(paths.home)
-      deleteTreeIfPresent(paths.harnessHomes)
       deleteTreeIfPresent(paths.distroHomes)
       RemoteAccess.Store(paths.base).deleteHostKey()
       if (!paths.home.mkdirs() && !paths.home.isDirectory) throw IOException("cannot recreate home")
-      if (!paths.harnessHomes.mkdirs() && !paths.harnessHomes.isDirectory) {
-        throw IOException("cannot recreate harness homes")
-      }
-      listOf(
-        TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
-        TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
-        TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
-      ).forEach { harness ->
-        val harnessHome = paths.harnessHome(harness)
-        if (!harnessHome.mkdirs() && !harnessHome.isDirectory) {
-          throw IOException("cannot recreate $harness home")
-        }
-      }
     }
     if (deleteWorkspaces) {
       removedWorkspaces = paths.defaultWorkspace.exists()

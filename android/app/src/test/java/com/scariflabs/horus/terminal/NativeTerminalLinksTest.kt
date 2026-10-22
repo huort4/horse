@@ -22,9 +22,9 @@ class NativeTerminalLinksTest {
 
   @Test
   fun trimsTrailingPunctuationAndUnbalancedBrackets() {
-    val (text, width) = row("(see https://claude.ai/docs).", 40)
+    val (text, width) = row("(see https://example.example/docs).", 40)
     val links = NativeTerminalLinks.detect(text, width)
-    assertArrayEquals(intArrayOf(5, 5 + "https://claude.ai/docs".length), links)
+    assertArrayEquals(intArrayOf(5, 5 + "https://example.example/docs".length), links)
   }
 
   @Test
@@ -43,7 +43,7 @@ class NativeTerminalLinksTest {
   @Test
   fun mapsStringIndicesToColumnsAcrossWideGlyphs() {
     // 中 and 文 each occupy two cells: the glyph plus an empty width-0 cell.
-    val url = "https://opencode.ai/x"
+    val url = "https://example.org/x"
     val text = arrayOf("中", "", "文", "", " ") + url.map(Char::toString).toTypedArray() + arrayOf(" ", " ")
     val width = ByteArray(text.size) { index -> if (index == 0 || index == 2) 2 else if (text[index].isEmpty()) 0 else 1 }
     val links = NativeTerminalLinks.detect(text, width)
@@ -83,7 +83,7 @@ class NativeTerminalLinksTest {
   @Test
   fun followsUrlsWrappedAcrossRowsForTapsAndUnderlines() {
     // A 12-column terminal wraps this sign-in URL across three rows.
-    val url = "https://claude.com/cai/oauth?code=true"
+    val url = "https://example.co/cai/oauth?code=true"
     val engine = NativeTerminalEngine("s-links-wrapped", 5, 12) { _, _ -> }
     try {
       assertTrue(engine.enqueue(1L, "Sign in:\r\n$url\r\ndone".toByteArray(StandardCharsets.UTF_8)))
@@ -108,14 +108,14 @@ class NativeTerminalLinksTest {
 
   @Test
   fun followsUrlsAnAppWrappedWithAnIndent() {
-    // Claude Code wraps its own text and indents continuation rows by two
+    // An app that wraps its own text indents continuation rows by two
     // spaces, so the URL is split by real line breaks.
     val engine = NativeTerminalEngine("s-links-indented", 6, 20) { _, _ -> }
     try {
-      val output = "x (https://claude.ai\r\n  /code/artifact/7f1\r\n  07076). Done\r\n"
+      val output = "x (https://example.com\r\n  /code/artifact/7f1\r\n  07076). Done\r\n"
       assertTrue(engine.enqueue(1L, output.toByteArray(StandardCharsets.UTF_8)))
       val frame = awaitFrame(engine) { it.lines.any { line -> line.text[2] == "0" } }
-      val url = "https://claude.ai/code/artifact/7f107076"
+      val url = "https://example.com/code/artifact/7f107076"
       assertEquals(url, NativeTerminalLinks.urlAt(frame.lines, 0, 5))
       assertEquals(url, NativeTerminalLinks.urlAt(frame.lines, 1, 2))
       assertEquals(url, NativeTerminalLinks.urlAt(frame.lines, 2, 6))
@@ -133,7 +133,7 @@ class NativeTerminalLinksTest {
 
   @Test
   fun opensAnyWellFormedHost() {
-    assertTrue(NativeTerminalLinks.isTrustedUrl("https://claude.com/cai/oauth/authorize?code=true"))
+    assertTrue(NativeTerminalLinks.isTrustedUrl("https://example.com/oauth/authorize?code=true"))
     assertTrue(NativeTerminalLinks.isTrustedUrl("https://example.com/docs"))
     assertTrue(NativeTerminalLinks.isTrustedUrl("http://[fe80::1]:8080/"))
     assertFalse(NativeTerminalLinks.isTrustedUrl("https://user@example.com"))

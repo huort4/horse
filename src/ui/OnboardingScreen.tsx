@@ -132,7 +132,7 @@ export function OnboardingScreen({rootfsInstalled, actions, permissions = DEFAUL
       return (
         <AuthScreenLayout brandTestID="setup" footer={<PrimaryButton label="CONTINUE  →" onPress={submitAccount} testID="profile-continue" />} pinned screenTestID="onboarding-account">
           <View style={styles.step}>
-            <StepHeader detail="Agents can use your code and accounts. Your password keeps them safe if someone picks up your phone." step={stepNumber} title="Create your user" />
+            <StepHeader detail="Your terminal can use your code and accounts. Your password keeps them safe if someone picks up your phone." step={stepNumber} title="Create your user" />
             <AccountForm distroName={DISTRO_NAMES[distro]} draft={account} onSubmit={submitAccount} />
           </View>
         </AuthScreenLayout>
@@ -226,7 +226,7 @@ function WelcomeStep({onContinue}: Readonly<{onContinue: () => void}>): React.JS
   return (
     <AuthScreenLayout brandTestID="setup" footer={<PrimaryButton label="GET STARTED  →" onPress={onContinue} testID="welcome-continue" />} pinned screenTestID="onboarding-welcome">
       <View style={styles.step}>
-        <Text style={styles.welcomeTitle}>Coding agents in your pocket</Text>
+        <Text style={styles.welcomeTitle}>A Linux terminal in your pocket</Text>
         <Text style={styles.welcomeDetail}>A real Linux terminal. No computer needed.</Text>
         <View style={styles.demo}>
           <WelcomeDemo />
@@ -242,7 +242,7 @@ type PermissionsStepProps = Readonly<{
   onContinue: () => void;
 }>;
 
-/** Without these, Android pauses agents in the background and the user never hears that a session needs them. */
+/** Without these, Android pauses sessions in the background and the user never hears that one needs them. */
 function PermissionsStep({step, permissions, onContinue}: PermissionsStepProps): React.JSX.Element {
   const state = useBackgroundPermissions(permissions);
   const notificationsAllowed = state.granted?.notifications === true;
@@ -264,10 +264,10 @@ function PermissionsStep({step, permissions, onContinue}: PermissionsStepProps):
   return (
     <AuthScreenLayout brandTestID="setup" footer={footer} pinned screenTestID="onboarding-permissions">
       <View style={styles.step}>
-        <StepHeader detail="So agents keep running with the screen off." step={step} title="Keep your agents running" />
+        <StepHeader detail="So sessions keep running with the screen off." step={step} title="Keep sessions running" />
         <View style={styles.checklist}>
-          <PermissionCheck allowed={notificationsAllowed} detail="When an agent finishes or needs you." icon="bell" label="Notifications" onPress={state.requestNotifications} testID="permission-notifications" />
-          <PermissionCheck allowed={batteryAllowed} detail="So Android doesn’t pause agents." icon="battery" label="Unrestricted battery" onPress={state.requestBattery} testID="permission-battery" />
+          <PermissionCheck allowed={notificationsAllowed} detail="When a long command finishes or needs you." icon="bell" label="Notifications" onPress={state.requestNotifications} testID="permission-notifications" />
+          <PermissionCheck allowed={batteryAllowed} detail="So Android doesn’t pause your terminal." icon="battery" label="Unrestricted battery" onPress={state.requestBattery} testID="permission-battery" />
         </View>
       </View>
     </AuthScreenLayout>
@@ -475,7 +475,7 @@ function RootfsFailure({distro, errorCode, mirror, onMirror, onRetry, onImport}:
 type KeyInfo = Readonly<{label: string; detail: string}>;
 
 const KEY_INFO = {
-  esc: {label: 'ESC', detail: 'Interrupts an agent or closes a menu.'},
+  esc: {label: 'ESC', detail: 'Interrupts a running command or closes a menu.'},
   slash: {label: '/', detail: 'Starts a slash command, like /help.'},
   dash: {label: '―', detail: 'A dash, for command options.'},
   keyboard: {label: 'SHOW', detail: 'Shows or hides the keyboard.'},
@@ -496,7 +496,7 @@ const TERMINAL_KEY_INFO: Readonly<Record<string, KeyInfo>> = {'/': KEY_INFO.slas
 const GESTURES: readonly Readonly<{glyph: string; label: string}>[] = [
   {glyph: '↕', label: 'Swipe the terminal to scroll'},
   {glyph: '↗', label: 'Tap a link to open it'},
-  {glyph: '←', label: 'Back keeps the agent running'},
+  {glyph: '←', label: 'Back keeps your session running'},
 ];
 
 /** The terminal's real key row, to try out: each tap explains that key. */
@@ -510,7 +510,6 @@ function KeysStep({step, onDone}: Readonly<{step: number; onDone: () => void}>):
     setAlt(false);
     setInfo(next);
   }, []);
-  const noop = React.useCallback(() => undefined, []);
 
   return (
     <AuthScreenLayout brandTestID="setup" footer={<PrimaryButton label="START USING HORUS  →" onPress={onDone} testID="onboarding-done" />} pinned screenTestID="onboarding-keys">
@@ -533,10 +532,7 @@ function KeysStep({step, onDone}: Readonly<{step: number; onDone: () => void}>):
             onTerminalKey={value => { const next = TERMINAL_KEY_INFO[value]; if (next !== undefined) show(next); }}
             onToggleAlt={() => { setAlt(value => !value); setCtrl(false); setInfo(KEY_INFO.alt); }}
             onToggleCtrl={() => { setCtrl(value => !value); setAlt(false); setInfo(KEY_INFO.ctrl); }}
-            onToggleTranscriptPager={noop}
-            running
-            toolchain="shell"
-            transcriptPagerOpen={false} />
+            running />
         </View>
         <View style={styles.gestures}>
           {GESTURES.map(gesture => (

@@ -280,7 +280,7 @@ def main(args):
     if reply is None:
         return fail('the Horus root helper stopped unexpectedly.')
     if reply.get('error') == 'not_allowed':
-        return fail('only your own Horus user can run commands as root, not apps like Claude Code or Codex.')
+        return fail('only your own Horus user can run commands as root, not other guest accounts.')
     if 'error' in reply:
         return fail('the Horus root helper could not run this (%s).' % reply['error'])
     return int(reply.get('exit', 1))

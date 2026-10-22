@@ -1,6 +1,5 @@
 import React from 'react';
 import {Image, Pressable as RNPressable, StyleSheet, Text, Vibration, View} from 'react-native';
-import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import {InteractivePressable as Pressable} from '../ui/InteractivePressable';
 import {UI_FONT_FAMILY} from '../ui/typography';
 import {uiColors} from './palette';
@@ -104,13 +103,10 @@ export type TerminalControlsProps = Readonly<{
   onTerminalKey: (value: string, applyModifiers?: boolean) => void;
   onToggleAlt: () => void;
   onToggleCtrl: () => void;
-  onToggleTranscriptPager: () => void;
   running: boolean;
-  toolchain: TerminalToolchainTarget;
-  transcriptPagerOpen: boolean;
 }>;
 
-export const TerminalControls = React.memo(function TerminalControlsView({altActive, ctrlActive, keyboardVisible, onArrow, onEscape, onKeyboardToggle, onPaste, onReturn, onTerminalKey, onToggleAlt, onToggleCtrl, onToggleTranscriptPager, running, toolchain, transcriptPagerOpen}: TerminalControlsProps): React.JSX.Element {
+export const TerminalControls = React.memo(function TerminalControlsView({altActive, ctrlActive, keyboardVisible, onArrow, onEscape, onKeyboardToggle, onPaste, onReturn, onTerminalKey, onToggleAlt, onToggleCtrl, running}: TerminalControlsProps): React.JSX.Element {
   const [returnPressed, setReturnPressed] = useReturnKeyPress();
   return (
     <View style={styles.controls}>
@@ -123,15 +119,6 @@ export const TerminalControls = React.memo(function TerminalControlsView({altAct
             <TerminalToolbarButton accessibilityLabel={keyboardVisible ? 'Hide keyboard' : 'Show keyboard'} disabled={!running} label={keyboardVisible ? 'HIDE' : 'SHOW'} onPress={onKeyboardToggle} testID="terminal-keyboard-toggle" />
             <TerminalToolbarButton accessibilityLabel="Arrow up" disabled={!running} label="↑" onPress={() => onArrow('A')} testID="terminal-key-arrow-up" />
             <TerminalToolbarButton accessibilityLabel="Paste" disabled={!running} label="PASTE" onPress={onPaste} testID="terminal-key-paste" />
-            {toolchain === 'codex' && running ? (
-              <TerminalToolbarButton
-                accessibilityLabel={transcriptPagerOpen ? 'Close transcript history' : 'Open transcript history'}
-                disabled={!running}
-                label={transcriptPagerOpen ? 'CHAT' : 'HIST'}
-                onPress={onToggleTranscriptPager}
-                testID="terminal-key-transcript-history"
-              />
-            ) : null}
           </View>
           <TerminalReturnUpperHalf disabled={!running} onPress={onReturn} pressed={returnPressed} setPressed={setReturnPressed} />
         </View>

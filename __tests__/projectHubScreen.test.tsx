@@ -22,7 +22,7 @@ async function renderHub(props: Partial<ProjectHubScreenProps>): Promise<ReactTe
         onOpenProject={noop}
         onRefreshRepos={noop}
         projects={[]}
-        toolName="OpenCode"
+        toolName="Bare terminal"
         {...props}
       />,
     );
@@ -45,7 +45,7 @@ const exists = (renderer: ReactTestRenderer.ReactTestRenderer, testID: string) =
 describe('ProjectHubScreen', () => {
   test('keeps the header and shows one tab at a time, starting on this device', async () => {
     const onBack = jest.fn();
-    const renderer = await renderHub({onBack, toolName: 'Claude Code'});
+    const renderer = await renderHub({onBack, toolName: 'GitHub CLI'});
 
     const menuButton = renderer.root.findAll(node => node.props.testID === 'project-hub-back' && node.props.accessibilityLabel !== undefined)[0];
     const header = renderer.root.findByType(BrandHeader);
@@ -53,7 +53,7 @@ describe('ProjectHubScreen', () => {
     expect(menuButton.props.accessibilityLabel).toBe('Back to home');
     expect(menuButton.findByType(Text).props.children).toBe('BACK');
     expect(header.props.title).toBe('Choose project');
-    expect(header.props.eyebrow).toBe('OPEN IN CLAUDE CODE');
+    expect(header.props.eyebrow).toBe('OPEN IN GITHUB CLI');
     await press(renderer, 'project-hub-back');
     expect(onBack).toHaveBeenCalledTimes(1);
 

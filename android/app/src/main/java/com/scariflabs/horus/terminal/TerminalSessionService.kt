@@ -65,33 +65,9 @@ class TerminalSessionService : Service() {
   private val nonCountingSessionIds = ConcurrentHashMap.newKeySet<String>()
   private val histories = ConcurrentHashMap<String, BoundedSessionOutputHistory>()
   private val unlockGrant = SessionUnlockGrant(clock = SystemClock::elapsedRealtime)
-  private val turnLock = Any()
-  private val turnTracker = HarnessTurnTracker(clock = SystemClock::elapsedRealtime)
-  private val startupRedraw = HarnessStartupRedraw(clock = SystemClock::elapsedRealtime)
-  private val turnTickScheduled = AtomicBoolean(false)
   // Whether the Horus activity is on screen. Unknown until the UI reports;
   // a missing client (process killed or unreachable) always means hidden.
   @Volatile private var uiVisible = false
-  private val turnTick = object : Runnable {
-    override fun run() {
-      turnTickScheduled.set(false)
-      val (finished, redraws, stillActive) = synchronized(turnLock) {
-        Triple(
-          turnTracker.pollFinished(),
-          startupRedraw.pollDue(),
-          turnTracker.hasActiveTurns() || startupRedraw.hasPending(),
-        )
-      }
-      if (redraws.isNotEmpty()) enqueueWorker { redraws.forEach { nudgeRedraw(it, "startup") } }
-      if (finished.isNotEmpty()) {
-        enqueueWorker {
-          refreshSessionNotifications()
-          if (!uiVisible || !hasClient()) finished.forEach(::notifyTurnFinished)
-        }
-      }
-      if (stillActive) scheduleTurnTick()
-    }
-  }
   private val sessionSettings by lazy {
     TerminalSessionSettings(
       File(
@@ -121,14 +97,6 @@ class TerminalSessionService : Service() {
   private val sessionEventListener = object : TerminalSessionSupervisor.EventListener {
     override fun onSessionOutput(sessionId: String, seq: Long, chunk: ByteArray) {
       histories.computeIfAbsent(sessionId) { BoundedSessionOutputHistory() }.add(seq, chunk)
-      if (isHarnessSession(sessionId)) {
-        val startupPending = synchronized(turnLock) {
-          turnTracker.onOutput(sessionId)
-          startupRedraw.onOutput(sessionId, chunk)
-          startupRedraw.hasPending()
-        }
-        if (startupPending) scheduleTurnTick()
-      }
       recordSessionOutputTimings(sessionId, chunk)
       sendEvent(
         Bundle().apply {
@@ -157,11 +125,6 @@ class TerminalSessionService : Service() {
     override fun onSessionExit(info: TerminalSessionSupervisor.SessionExitInfo) {
       attachedSessions.remove(info.sessionId)
       nonCountingSessionIds.remove(info.sessionId)
-      synchronized(turnLock) {
-        turnTracker.remove(info.sessionId)
-        startupRedraw.remove(info.sessionId)
-      }
-      notificationManager.cancel(turnNotificationId(info.sessionId))
       val exitRecord =
         "session_exit session=${info.sessionId} reason=${info.reason} code=${info.exitCode ?: "none"} signal=${info.signal ?: "none"}"
       android.util.Log.i(LOG_TAG, exitRecord)
@@ -327,7 +290,6 @@ class TerminalSessionService : Service() {
   override fun onDestroy() {
     stopping = true
     TerminalDebugLog.record(this, "service_destroyed")
-    handler.removeCallbacks(turnTick)
     stopProvisionProcess()
     if (remoteServerDelegate.isInitialized()) runCatching { remoteServer.close() }
     provisionExecutor.shutdownNow()
@@ -784,14 +746,6 @@ class TerminalSessionService : Service() {
     }
     when (val outcome = supervisor.write(sessionId!!, bytes)) {
       is TerminalSessionSupervisor.WriteOutcome.Success -> {
-        if (isHarnessSession(sessionId)) {
-          val started = synchronized(turnLock) { turnTracker.onInput(sessionId, bytes) }
-          if (started) {
-            notificationManager.cancel(turnNotificationId(sessionId))
-            refreshSessionNotifications()
-            scheduleTurnTick()
-          }
-        }
         sendResponse(
         reply,
         successResponse(requestId).apply {
@@ -916,7 +870,6 @@ class TerminalSessionService : Service() {
     if (snapshot.state == TerminalSessionSupervisor.SessionState.RUNNING) {
       attachedSessions[sessionId] = SystemClock.elapsedRealtime()
     }
-    notificationManager.cancel(turnNotificationId(sessionId))
     val replayAfterSeq = minOf(afterSeq, snapshot.lastEmittedSeq)
     val history = histories[sessionId]?.snapshot().orEmpty().filter { it.seq > replayAfterSeq }
     val firstAvailable = history.firstOrNull()?.seq
@@ -1265,9 +1218,6 @@ class TerminalSessionService : Service() {
   }
 
   private fun notificationLabel(record: TerminalSessionJournal.Record): String = when (record.toolchainTarget) {
-    TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "Claude Code"
-    TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "Codex"
-    TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "OpenCode"
     TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB -> "GitHub CLI"
     else -> "Bare terminal"
   }
@@ -1416,16 +1366,13 @@ class TerminalSessionService : Service() {
     val logDirectory = File(home, ".cache/horus")
     val logName = when (target) {
       TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB -> "github-install.log"
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "claude-install.log"
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "codex-install.log"
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "opencode-install.log"
       else -> "alpine-bootstrap.log"
     }
     val targetLog = File(logDirectory, logName).let { file ->
       readPrivateTail(file)
     }
     when {
-      targetLog.contains("EBADENGINE", ignoreCase = true) -> return "toolchain_node_version"
+      targetLog.contains("EBADENGINE", ignoreCase = true) -> return "toolchain_install_failed"
       targetLog.contains("ENOSPC", ignoreCase = true) -> return "toolchain_install_failed"
       targetLog.contains("EACCES", ignoreCase = true) || targetLog.contains("permission denied", ignoreCase = true) -> return "toolchain_permissions"
       targetLog.contains("ENETUNREACH", ignoreCase = true) || targetLog.contains("EAI_AGAIN", ignoreCase = true) || targetLog.contains("fetch failed", ignoreCase = true) -> return "toolchain_network"
@@ -1436,9 +1383,6 @@ class TerminalSessionService : Service() {
     }
     return when (stage) {
       "github_failed" -> "toolchain_github_install_failed"
-      "claude_failed" -> "toolchain_install_failed"
-      "codex_failed" -> "toolchain_codex_install_failed"
-      "opencode_failed" -> "toolchain_opencode_install_failed"
       "normalize_failed" -> "toolchain_normalization_failed"
       "verify_failed" -> "toolchain_incomplete"
       "apk_failed" -> "toolchain_install_failed"
@@ -1474,14 +1418,7 @@ class TerminalSessionService : Service() {
       description = getString(R.string.terminal_service_channel_description)
       setShowBadge(false)
     }
-    val turnChannel = NotificationChannel(
-      TURN_CHANNEL_ID,
-      getString(R.string.terminal_turn_channel_name),
-      NotificationManager.IMPORTANCE_HIGH,
-    ).apply {
-      description = getString(R.string.terminal_turn_channel_description)
-    }
-    getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(channel, turnChannel))
+    getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
   }
 
   private fun buildNotification(): Notification {
@@ -1522,24 +1459,15 @@ class TerminalSessionService : Service() {
     notificationId: Int,
   ): Notification {
     val label = notificationLabel(record)
-    val harness = isHarnessTarget(record.toolchainTarget)
-    val working = harness && synchronized(turnLock) {
-      turnTracker.state(record.sessionId) == HarnessTurnTracker.State.WORKING
-    }
     // Without a client the UI process was reclaimed (or frozen and
     // unreachable). Say plainly that the work is safe.
     val uiGone = !hasClient()
-    val title = when {
-      working && uiGone -> getString(R.string.terminal_session_title_working_detached, label)
-      working -> getString(R.string.terminal_session_title_working, label)
-      uiGone -> getString(R.string.terminal_session_title_open_detached, label)
-      else -> getString(R.string.terminal_session_title_open, label)
+    val title = if (uiGone) {
+      getString(R.string.terminal_session_title_open_detached, label)
+    } else {
+      getString(R.string.terminal_session_title_open, label)
     }
-    val text = when {
-      uiGone -> getString(R.string.terminal_session_text_detached)
-      working -> getString(R.string.terminal_session_text_working)
-      else -> getString(R.string.terminal_session_text_open)
-    }
+    val text = if (uiGone) getString(R.string.terminal_session_text_detached) else getString(R.string.terminal_session_text_open)
     return notificationBuilder()
       .setContentTitle(title)
       .setContentText(text)
@@ -1554,49 +1482,6 @@ class TerminalSessionService : Service() {
       .setCategory(Notification.CATEGORY_SERVICE)
       .build()
   }
-
-  /** One alerting reminder per finished turn, only while Horus is off screen. */
-  private fun notifyTurnFinished(sessionId: String) {
-    val record = sessionRecords[sessionId] ?: return
-    if (supervisor.snapshot(sessionId)?.state != TerminalSessionSupervisor.SessionState.RUNNING) return
-    val label = notificationLabel(record)
-    val text = getString(R.string.terminal_turn_text)
-    val notificationId = turnNotificationId(sessionId)
-    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      Notification.Builder(this, TURN_CHANNEL_ID)
-    } else {
-      @Suppress("DEPRECATION")
-      Notification.Builder(this).setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL)
-    }
-    val notification = builder
-      .setSmallIcon(R.mipmap.ic_launcher)
-      .setContentTitle(getString(R.string.terminal_turn_title, label))
-      .setContentText(text)
-      .setStyle(Notification.BigTextStyle().bigText(text))
-      .setSubText(getString(R.string.terminal_session_subtext, sessionStartedAt(record)))
-      .setContentIntent(buildPendingIntent(notificationId, sessionId))
-      .setAutoCancel(true)
-      .setShowWhen(true)
-      .setCategory(Notification.CATEGORY_REMINDER)
-      .build()
-    TerminalDebugLog.record(this, "turn_finished_notification session=$sessionId")
-    notificationManager.notify(notificationId, notification)
-  }
-
-  private fun turnNotificationId(sessionId: String): Int =
-    TURN_NOTIFICATION_BASE_ID + Math.floorMod(sessionId.hashCode(), TURN_NOTIFICATION_ID_RANGE)
-
-  private fun scheduleTurnTick() {
-    if (!turnTickScheduled.compareAndSet(false, true)) return
-    handler.postDelayed(turnTick, TURN_TICK_MS)
-  }
-
-  private fun isHarnessSession(sessionId: String): Boolean = isHarnessTarget(sessionRecords[sessionId]?.toolchainTarget)
-
-  private fun isHarnessTarget(target: String?): Boolean =
-    target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE ||
-      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX ||
-      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE
 
   private fun sessionStartedAt(record: TerminalSessionJournal.Record): String = DateUtils.formatDateTime(
     this,
@@ -1638,10 +1523,6 @@ class TerminalSessionService : Service() {
     const val REMOTE_STOP_REQUEST_CODE = 1377
     const val NOTIFICATION_CHANNEL_ID = "terminal_sessions"
     const val NOTIFICATION_ID = 1379
-    const val TURN_CHANNEL_ID = "harness_turns"
-    const val TURN_NOTIFICATION_BASE_ID = 2000
-    const val TURN_NOTIFICATION_ID_RANGE = 1000
-    const val TURN_TICK_MS = 1_000L
     // Long enough for the app to handle SIGWINCH at the shrunken size before
     // the restore arrives; a coalesced pair would look like no change.
     const val REDRAW_RESTORE_DELAY_MS = 250L

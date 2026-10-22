@@ -498,7 +498,7 @@ export function TerminalGrid({frame, nativeSessionId, nativeRows = 24, nativeCol
     nativeCursorRow.current = cursorRow;
     // A full-screen app taller than the visible area (the keyboard is open
     // but the PTY keeps its full height) may move its prompt after the
-    // keyboard opened, e.g. Codex drawing its composer at the bottom once it
+    // keyboard opened, e.g. a TUI drawing its composer at the bottom once it
     // starts. Scroll just far enough to keep the cursor in view. The user
   // cannot scroll this view themselves, so there is no position to keep.
     const viewportHeight = nativeViewportHeight.current;

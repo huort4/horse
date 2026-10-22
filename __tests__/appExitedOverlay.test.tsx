@@ -38,5 +38,4 @@ test('normal exits, ordinary shell command errors and GitHub interrupts stay dis
   expect(appExitKind('shell', {exitCode: 1, output: 'Build failed'})).toBe('command_failed');
   expect(appExitKind('github', {exitCode: 130})).toBe('interrupted');
   expect(appExitKind('github', {signal: 'sigint'})).toBe('interrupted');
-  expect(appExitKind('codex', {exitCode: 1})).toBe('unexpected');
 });

@@ -256,10 +256,9 @@ class TerminalSessionSpecFactory(
   /** The Linux user of the active distribution. */
   fun activeProfileUsername(): String? = TerminalGuestIdentity.readStoredUsername(context, activeDistro())
 
-  /** The active distribution's user home; created on first use. */
+  /** The active distribution's user home, created on first use. */
   private fun activeGuestHome(): File {
-    val distro = activeDistro()
-    val home = paths.homeFor(distro)
+    val home = paths.homeFor(activeDistro())
     if (!home.isDirectory && !home.mkdirs()) throw IllegalStateException("guest home is unavailable")
     return home
   }

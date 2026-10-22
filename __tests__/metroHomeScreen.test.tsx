@@ -2,7 +2,6 @@ import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 import {MetroHomeScreen, type MetroLaunchTarget} from '../src/ui/MetroHomeScreen';
 import type {ActiveTerminalSession} from '../src/terminal/session/sessionContract';
-import {buildZshScriptCommand} from '../src/terminal/commandFactory';
 
 describe('MetroHomeScreen', () => {
   test('renders the launcher, opens the GitHub login flow, and tears down metrics refresh', async () => {
@@ -37,13 +36,15 @@ describe('MetroHomeScreen', () => {
     });
     expect(onOpenGithubLogin).toHaveBeenCalledTimes(1);
     expect(targets).toHaveLength(0);
-    expect(renderer?.root.findByProps({testID: 'metro-harness-opencode'})).toBeDefined();
+    expect(renderer?.root.findByProps({testID: 'metro-app-shell'})).toBeDefined();
+    expect(renderer?.root.findByProps({testID: 'metro-app-projects'})).toBeDefined();
     await ReactTestRenderer.act(async () => {
-      renderer?.root.findByProps({testID: 'metro-harness-opencode'}).props.onPress();
+      renderer?.root.findByProps({testID: 'metro-app-projects'}).props.onPress();
     });
-    expect(targets[0]?.title).toBe('OpenCode');
-    expect(targets[0]?.toolchain).toBe('opencode');
-    expect(targets[0]?.command).toBe(buildZshScriptCommand('opencode'));
+    expect(targets[0]?.title).toBe('Bare terminal');
+    expect(targets[0]?.toolchain).toBe('shell');
+    expect(targets[0]?.opensProjects).toBe(true);
+    expect(targets[0]?.command).toBeUndefined();
     await ReactTestRenderer.act(async () => {
       renderer?.root.findByProps({testID: 'metro-files'}).props.onPress();
     });
@@ -161,7 +162,7 @@ describe('MetroHomeScreen', () => {
   test('shows all four active sessions above the launcher tiles and resumes a listed session', async () => {
     const sessions: ActiveTerminalSession[] = Array.from({length: 4}, (_, index): ActiveTerminalSession => ({
       sessionId: `session-${index + 1}`,
-      toolchain: index % 2 === 0 ? 'codex' : 'opencode',
+      toolchain: index % 2 === 0 ? 'github' : 'shell',
       startedAtMs: Date.now() - (index + 1) * 60_000,
     }));
     const loadRecentSessions = jest.fn(async () => sessions);
@@ -180,11 +181,11 @@ describe('MetroHomeScreen', () => {
     });
 
     const menuOrder = Array.from(new Set(renderer?.root.findAll(node => [
-      'metro-harnesses',
+      'metro-sessions',
       'metro-files',
       'metro-recents',
     ].includes(node.props.testID)).map(node => node.props.testID)));
-    expect(menuOrder).toEqual(['metro-harnesses', 'metro-files', 'metro-recents']);
+    expect(menuOrder).toEqual(['metro-sessions', 'metro-files', 'metro-recents']);
     const recentRowIds = new Set(renderer?.root.findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('metro-recent-session-')).map(node => node.props.testID));
     const terminateIds = new Set(renderer?.root.findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('metro-terminate-session-')).map(node => node.props.testID));
     expect(recentRowIds).toEqual(new Set(sessions.map(session => `metro-recent-${session.sessionId}`)));

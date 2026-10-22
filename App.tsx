@@ -11,7 +11,7 @@ import {githubRepositoryError, listGithubRepositories, type GithubAccount} from 
 import {clearStoredGithubAccount, readStoredGithubAccount, saveGithubAccount} from './src/projects/githubAccountStore';
 import {GITHUB_AUTH_LOGIN_COMMAND, openGithubDeviceLoginUrl} from './src/projects/githubDeviceLogin';
 import type {ProjectSummary} from './src/projects/projectTypes';
-import {WORKSPACE_PROJECTS_DIRECTORY, buildProjectCloneCommand, harnessSessionTarget, printHiddenMarker, workspaceProjectDirectory} from './src/projects/projectCommands';
+import {WORKSPACE_PROJECTS_DIRECTORY, buildProjectCloneCommand, printHiddenMarker, projectSessionTarget, workspaceProjectDirectory} from './src/projects/projectCommands';
 import {DISTRO_NAMES, LINUX_DISTROS, dismissAccountIntro, lockedOutMessage, readUserProfile, updateUserProfile, verifyUserPassword, type LinuxDistro, type ProfileUser, type UserProfile} from './src/profile/profileStore';
 import {setupOnboardingProfile} from './src/profile/onboardingSetup';
 import {readDownloadSources, writeDownloadSources} from './src/terminal/downloadSources';
@@ -52,15 +52,9 @@ const BARE_SHELL_COMMAND = buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECT
 
 /** The one terminal whose hidden completion marker App is waiting for. */
 type PendingCompletion =
-  | Readonly<{kind: 'clone'; marker: string; name: string; directory: string; harness: MetroLaunchTarget}>
+  | Readonly<{kind: 'clone'; marker: string; name: string; directory: string; project: MetroLaunchTarget}>
   | Readonly<{kind: 'github-login'; marker: string; returnTo: 'home' | 'projects'}>
   | Readonly<{kind: 'github-logout'; marker: string}>;
-
-function isHarnessTarget(target: MetroLaunchTarget): boolean {
-  return target.sessionId === undefined && (
-    target.toolchain === 'claude' || target.toolchain === 'codex' || target.toolchain === 'opencode'
-  );
-}
 
 function App(): React.JSX.Element {
   const [route, setRoute] = React.useState<AppRoute>('boot');
@@ -82,7 +76,7 @@ function App(): React.JSX.Element {
   });
   const [terminalInstanceKey, setTerminalInstanceKey] = React.useState(0);
   const [terminalReturnRoute, setTerminalReturnRoute] = React.useState<'home' | 'projects'>('home');
-  const [selectedHarness, setSelectedHarness] = React.useState<MetroLaunchTarget | undefined>();
+  const [selectedProject, setSelectedProject] = React.useState<MetroLaunchTarget | undefined>();
   const [projectConnected, setProjectConnected] = React.useState(false);
   const projectConnectedRef = React.useRef(projectConnected);
   projectConnectedRef.current = projectConnected;
@@ -268,7 +262,7 @@ function App(): React.JSX.Element {
     setRoute('home');
   }, [profile, activeDistro, sessionClient, setPendingCompletion]);
 
-  // Locking only hides the workspace. Running harnesses and shells keep
+  // Locking only hides the workspace. Running sessions keep
   // working behind the password screen and are in Recents after unlock.
   const lockSession = React.useCallback(() => {
     setProfileError(undefined);
@@ -325,8 +319,8 @@ function App(): React.JSX.Element {
       setRoute('files');
       return;
     }
-    if (isHarnessTarget(target)) {
-      setSelectedHarness(target);
+    if (target.opensProjects === true) {
+      setSelectedProject(target);
       setProjectError(undefined);
       // Without a saved account the query can only fail, so the chooser
       // waits for the user to connect instead of showing that error.
@@ -419,20 +413,20 @@ function App(): React.JSX.Element {
 
   const addProject = React.useCallback((name: string) => {
     const directory = workspaceProjectDirectory(name);
-    if (directory === undefined || selectedHarness === undefined) return;
+    if (directory === undefined || selectedProject === undefined) return;
     manualWorkspaceRefreshRef.current += 1;
     const project = {name, path: directory};
     setProjects(current => [...current.filter(item => item.path !== directory), project]);
-    openTerminal(harnessSessionTarget(selectedHarness, name, directory));
-  }, [openTerminal, selectedHarness]);
+    openTerminal(projectSessionTarget(selectedProject, name, directory));
+  }, [openTerminal, selectedProject]);
 
   const beginProjectClone = React.useCallback((source: string, name: string, kind: 'github' | 'url') => {
     const directory = workspaceProjectDirectory(name);
-    if (directory === undefined || selectedHarness === undefined) return;
+    if (directory === undefined || selectedProject === undefined) return;
     manualWorkspaceRefreshRef.current += 1;
     const marker = `HORUS_PROJECT_CLONE_COMPLETE_${nextSessionRequestId('clone')}`;
     const command = buildProjectCloneCommand(source, directory, marker, kind);
-    setPendingCompletion({kind: 'clone', marker, name, directory, harness: selectedHarness});
+    setPendingCompletion({kind: 'clone', marker, name, directory, project: selectedProject});
     openTerminal({
       title: `Clone or reuse ${name}`,
       eyebrow: 'BARE TERMINAL / CLONE',
@@ -441,7 +435,7 @@ function App(): React.JSX.Element {
       returnTo: 'projects',
       completionMarker: marker,
     }, 'projects');
-  }, [openTerminal, selectedHarness, setPendingCompletion]);
+  }, [openTerminal, selectedProject, setPendingCompletion]);
 
   const cloneProject = React.useCallback((url: string, name: string) => {
     beginProjectClone(url, name, 'url');
@@ -536,9 +530,9 @@ function App(): React.JSX.Element {
       return;
     }
     const directory = workspaceProjectDirectory(project.name);
-    if (directory === undefined || selectedHarness === undefined) return;
-    openTerminal(harnessSessionTarget(selectedHarness, project.name, directory));
-  }, [beginProjectClone, openTerminal, selectedHarness]);
+    if (directory === undefined || selectedProject === undefined) return;
+    openTerminal(projectSessionTarget(selectedProject, project.name, directory));
+  }, [beginProjectClone, openTerminal, selectedProject]);
 
   const failPendingCompletion = React.useCallback((marker: string) => {
     const pending = pendingCompletionRef.current;
@@ -594,7 +588,7 @@ function App(): React.JSX.Element {
     manualWorkspaceRefreshRef.current += 1;
     setProjects(current => [...current.filter(item => item.path !== pending.directory), {name: pending.name, path: pending.directory}]);
     setPendingCompletion(undefined);
-    openTerminal(harnessSessionTarget(pending.harness, pending.name, pending.directory));
+    openTerminal(projectSessionTarget(pending.project, pending.name, pending.directory));
   }, [openTerminal, refreshGithubRepositories, setPendingCompletion, terminalTarget.completionMarker]);
 
   const importDownloadedRootfs = React.useCallback(() => {
@@ -714,7 +708,7 @@ function App(): React.JSX.Element {
         onOpenProject={openExistingProject}
         onRefreshRepos={() => { void refreshGithubRepositories(); }}
         projects={projects}
-        toolName={selectedHarness?.title ?? 'Harness'}
+        toolName={selectedProject?.title ?? 'Bare terminal'}
       />
     );
   }

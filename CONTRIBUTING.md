@@ -1,8 +1,8 @@
 # Contributing to Horus
 
-Horus runs coding agents and a Linux workspace on Android. Contributions that
-make setup, terminal use, agent compatibility, documentation, and optional USB
-remote access more reliable are welcome. Please follow our
+Horus runs a Linux workspace and terminal on Android. Contributions that make
+setup, terminal use, documentation, and optional USB remote access more reliable
+are welcome. Please follow our
 [Code of Conduct](.github/CODE_OF_CONDUCT.md).
 
 ## Find the right place

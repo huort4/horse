@@ -95,7 +95,7 @@ export function BackgroundPermissionsPanel({actions = DEFAULT_BACKGROUND_PERMISS
       testID="settings-background-permissions"
       title="BACKGROUND">
       <SettingsRow
-        detail="Running sessions, and when an agent needs you"
+        detail="Running sessions, and when a command finishes"
         icon="bell"
         label="Notifications"
         right={control(state.granted?.notifications === true, 'Notifications', state.requestNotifications, 'settings-permission-notifications')}

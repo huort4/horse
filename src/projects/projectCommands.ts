@@ -1,4 +1,4 @@
-import {CLAUDE_COMMAND, buildZshCommand, buildZshScriptCommand, shellQuote} from '../terminal/commandFactory';
+import {buildZshCommand, shellQuote} from '../terminal/commandFactory';
 import type {MetroLaunchTarget} from '../ui/MetroHomeScreen';
 
 export const WORKSPACE_PROJECTS_DIRECTORY = '/workspace/projects';
@@ -9,15 +9,14 @@ export function workspaceProjectDirectory(name: string): string | undefined {
     : undefined;
 }
 
-export function harnessSessionTarget(harness: MetroLaunchTarget, name: string, directory: string): MetroLaunchTarget {
-  const toolchain = harness.toolchain ?? 'shell';
-  const command = toolchain === 'opencode' ? 'opencode' : toolchain === 'claude' ? CLAUDE_COMMAND : 'codex';
-  const script = `mkdir -p ${shellQuote(directory)} && cd ${shellQuote(directory)} && exec ${command}`;
+/** Opens the chosen project folder in a fresh login shell. */
+export function projectSessionTarget(project: MetroLaunchTarget, name: string, directory: string): MetroLaunchTarget {
+  const script = `mkdir -p ${shellQuote(directory)} && cd ${shellQuote(directory)} && exec zsh -l`;
   return {
-    title: harness.title,
+    title: project.title,
     eyebrow: name,
-    command: toolchain === 'opencode' ? buildZshScriptCommand(script) : buildZshCommand(script),
-    toolchain,
+    command: buildZshCommand(script),
+    toolchain: 'shell',
     returnTo: 'home',
   };
 }
