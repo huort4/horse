@@ -107,7 +107,7 @@ class DistroStoreCoreTest {
     val rootfs = store.activeRootfsDir()!!
     val rootOnly = emulatedLink(store, "root", File(rootfs, "bin/package"))
     val shared = emulatedLink(store, "shared", File(rootfs, "bin/shared"), File(store.storage.home, "shared"), File(store.storage.defaultWorkspace, "shared"))
-    val userHome = emulatedLink(store, "userhome", File(store.storage.home, "shared"))
+    val userHome = emulatedLink(store, "userhome", File(store.storage.home, "shared-home"))
     val tmp = emulatedLink(store, "tmp", File(store.storage.guestTmp, "survivor"))
     val unknown = File(store.storage.hardlinks, "user-file").apply { writeText("keep") }
     store.reset()
