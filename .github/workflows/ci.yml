@@ -86,7 +86,7 @@ jobs:
         run: sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
       - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
         with:
-          cache-read-only: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
+          cache-read-only: true
       - run: npm ci --no-audit --no-fund
       - name: JVM tests and unsigned production build
         working-directory: android
