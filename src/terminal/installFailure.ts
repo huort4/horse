@@ -57,8 +57,7 @@ export type InstallFailureCopy = Readonly<{title: string; reason: string; advice
 export function installFailureCopy(failure: InstallFailure, toolchain: TerminalToolchainTarget): InstallFailureCopy {
   const label = toolchainInstallLabel(toolchain);
   const title = `Couldn’t install ${label}`;
-  // Claude Code always downloads from Anthropic; the others can use a mirror.
-  const mirror = toolchain === 'claude' ? '' : ' You can also pick another mirror in Settings › Downloads.';
+  const mirror = ' You can also pick another mirror in Settings › Downloads.';
   switch (failure.kind) {
     case 'offline':
       return {title, reason: 'Your phone is offline.', advice: `Horus downloads ${label} the first time you open it. Turn on Wi-Fi or mobile data, then try again.`};

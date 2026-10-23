@@ -13,7 +13,7 @@
     <string name="terminal_session_text_detached">Android closed Horus to free up memory, but your session kept running. Tap to pick up where you left off.</string>
     <string name="terminal_session_subtext">Started %1$s</string>
     <string name="terminal_turn_channel_name">Turn updates</string>
-    <string name="terminal_turn_channel_description">Tells you when Claude Code, Codex, or OpenCode stops working and needs you while Horus is in the background.</string>
+    <string name="terminal_turn_channel_description">Tells you when a terminal session is waiting for you while Horus is in the background.</string>
     <string name="terminal_turn_title">%1$s is waiting for you</string>
     <string name="terminal_turn_text">It finished its turn or needs your approval. Tap to reply.</string>
     <string name="remote_access_title">Remote access is on</string>

@@ -135,9 +135,6 @@ function errorLabel(operation: TrustedSessionOperation | {kind: 'error'; errorCo
 
 function toolchainInstallError(target: TerminalToolchainTarget): string {
   if (target === 'github') return 'toolchain_github_install_failed';
-  if (target === 'claude') return 'toolchain_install_failed';
-  if (target === 'codex') return 'toolchain_codex_install_failed';
-  if (target === 'opencode') return 'toolchain_opencode_install_failed';
   return 'toolchain_install_failed';
 }
 
@@ -308,11 +305,11 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   // Interactive sessions parse and draw natively. One-off shell commands that
   // wait for a completion marker, and the GitHub login flow, keep the JS path
   // because they scan output in JS.
+  // AI agents removed — native path only for interactive shell sessions.
   const nativeHarness = Platform.OS === 'android' && !Platform.isTesting &&
-    (toolchain === 'claude' || toolchain === 'codex' || toolchain === 'opencode' ||
-      (toolchain === 'shell' && completionMarker === undefined));
+    (toolchain === 'shell' && completionMarker === undefined);
   const nativeTerminalInput = Platform.OS === 'android' && !Platform.isTesting;
-  const nativeOpenCode = nativeHarness && toolchain === 'opencode';
+  const nativeOpenCode = false;
 
   viewportRef.current = viewport;
 
@@ -930,14 +927,8 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   }, [altActive, clearKeyboardInput, ctrlActive, releaseModifiers, write]);
 
   const sendEscape = React.useCallback(() => {
-    if (toolchain === 'codex' && transcriptPagerOpen) {
-      clearKeyboardInput();
-      setTranscriptPagerOpen(false);
-      void write('\u001b');
-      return;
-    }
     sendTerminalKey('\u001b');
-  }, [clearKeyboardInput, sendTerminalKey, toolchain, transcriptPagerOpen, write]);
+  }, [sendTerminalKey]);
 
   const sendArrow = React.useCallback((direction: TerminalArrow) => {
     clearKeyboardInput();
@@ -987,7 +978,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
 
   const sendPageKey = React.useCallback((direction: 'up' | 'down') => {
     const sequence = direction === 'up' ? '\u001b[5~' : '\u001b[6~';
-    if (toolchain === 'codex' && direction === 'up' && !transcriptPagerOpen) {
+    if (false && direction === 'up' && !transcriptPagerOpen) {
       setTranscriptPagerOpen(true);
       void (async () => {
         await write('\u0014');
