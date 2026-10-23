@@ -47,7 +47,6 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / 1024)} KB`;
 }
 
-const harnessLogoSources = HARNESS_LOGO_SOURCES;
 
 function StatTile({label, value, detail, divided}: {label: string; value: string; detail: string; divided: boolean}): React.JSX.Element {
   return (
@@ -454,7 +453,6 @@ const styles = StyleSheet.create({
   appTile: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 104, padding: 10},
   appIcon: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 34, fontWeight: '700', height: 42, lineHeight: 42, textAlign: 'center'},
   appLogo: {height: 42, width: 42},
-  codexLogo: {tintColor: uiColors.ink},
   appTitle: {color: uiColors.ink, fontFamily: UI_FONT_FAMILY, fontSize: 11, fontWeight: '400', marginTop: 7},
   appDetail: {color: uiColors.subdued, fontFamily: UI_FONT_FAMILY, fontSize: 9, marginTop: 4},
   filesTile: {alignItems: 'center', backgroundColor: uiColors.panel, borderColor: uiColors.border, borderRadius: 12, borderWidth: 1, flexDirection: 'row', marginTop: 1, minHeight: 76, paddingHorizontal: 13},
