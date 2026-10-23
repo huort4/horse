@@ -57,9 +57,8 @@ type PendingCompletion =
   | Readonly<{kind: 'github-logout'; marker: string}>;
 
 function isHarnessTarget(target: MetroLaunchTarget): boolean {
-  return target.sessionId === undefined && (
-    target.toolchain === 'claude' || target.toolchain === 'codex' || target.toolchain === 'opencode'
-  );
+  // AI harnesses removed.
+  return false;
 }
 
 function App(): React.JSX.Element {

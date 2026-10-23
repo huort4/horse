@@ -107,7 +107,7 @@ class DistroStoreCoreTest {
     val rootfs = store.activeRootfsDir()!!
     val rootOnly = emulatedLink(store, "root", File(rootfs, "bin/package"))
     val shared = emulatedLink(store, "shared", File(rootfs, "bin/shared"), File(store.storage.home, "shared"), File(store.storage.defaultWorkspace, "shared"))
-    val harness = emulatedLink(store, "harness", File(store.storage.harnessHome("codex"), "shared"))
+    val harness = emulatedLink(store, "harness", File(store.storage.home, "harness-shared"))
     val tmp = emulatedLink(store, "tmp", File(store.storage.guestTmp, "survivor"))
     val unknown = File(store.storage.hardlinks, "user-file").apply { writeText("keep") }
     store.reset()
@@ -466,8 +466,8 @@ class DistroStoreCoreTest {
     val paths = store.storage
     assertEquals(paths.home, paths.homeFor(RootfsCatalog.DISTRO_ALPINE))
     assertEquals(File(paths.base, "homes/debian/home"), paths.homeFor(RootfsCatalog.DISTRO_DEBIAN))
-    assertEquals(paths.harnessHome("claude"), paths.harnessHomeFor(RootfsCatalog.DISTRO_ALPINE, "claude"))
-    assertEquals(File(paths.base, "homes/debian/harness-homes/claude"), paths.harnessHomeFor(RootfsCatalog.DISTRO_DEBIAN, "claude"))
+    // AI harness homes removed — only profile homes remain.
+    assertEquals(paths.home, paths.homeFor(RootfsCatalog.DISTRO_ALPINE))
 
     store.install(entry = RootfsCatalog.DEBIAN, expectedSha256 = archiveSha256, expectedBytes = archiveBytes.size.toLong())
     // The probe ran against Debian's home, which now exists.
@@ -498,7 +498,7 @@ class DistroStoreCoreTest {
       parentFile!!.mkdirs()
       writeText("user data")
     }
-    val harnessCredential = File(store.storage.harnessHome(TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX), "auth.json").apply {
+    val harnessCredential = File(store.storage.home, "harness-auth.json").apply {
       parentFile!!.mkdirs()
       writeText("harness data")
     }
@@ -524,13 +524,7 @@ class DistroStoreCoreTest {
     assertFalse(harnessCredential.exists())
     assertFalse(workspaceSentinel.exists())
     assertTrue(store.storage.home.isDirectory)
-    for (harness in listOf(
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
-    )) {
-      assertTrue(store.storage.harnessHome(harness).isDirectory)
-    }
+    // harness homes removed with AI agents
   }
 
   @Test
@@ -550,7 +544,6 @@ class DistroStoreCoreTest {
     assertFalse(homeReset.workspacesRemoved)
     assertFalse(homeSentinel.exists())
     assertEquals("workspace", workspaceSentinel.readText())
-    assertTrue(store.storage.harnessHome(TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE).isDirectory)
 
     val workspaceReset = store.reset(deleteWorkspaces = true)
     assertFalse(workspaceReset.homeRemoved)

@@ -34,9 +34,9 @@ class TerminalRuntimeContractTest {
     assertFalse(TerminalRuntimeContract.isValidResetScope(null))
     assertTrue(TerminalRuntimeContract.isValidToolchainTarget(TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL))
     assertTrue(TerminalRuntimeContract.isValidToolchainTarget(TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB))
-    assertTrue(TerminalRuntimeContract.isValidToolchainTarget(TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE))
-    assertTrue(TerminalRuntimeContract.isValidToolchainTarget(TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX))
-    assertTrue(TerminalRuntimeContract.isValidToolchainTarget(TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE))
+    assertFalse(TerminalRuntimeContract.isValidToolchainTarget("claude"))
+    assertFalse(TerminalRuntimeContract.isValidToolchainTarget("codex"))
+    assertFalse(TerminalRuntimeContract.isValidToolchainTarget("opencode"))
     assertFalse(TerminalRuntimeContract.isValidToolchainTarget("all"))
   }
 

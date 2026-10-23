@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "target": "es5",
-    "lib": ["dom", "es2015"],
+    "lib": [
+      "dom",
+      "es2015"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -14,8 +17,15 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "react-native"
+    "jsx": "react-native",
+    "ignoreDeprecations": "6.0"
   },
-  "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["**/node_modules", "**/Pods"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/Pods"
+  ]
 }

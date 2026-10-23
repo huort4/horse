@@ -100,7 +100,7 @@ class TerminalSessionJournalTest {
             80,
             null,
             5L,
-            TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
+            TerminalRuntimeContract.TOOLCHAIN_TARGET_SHELL,
           ),
         ),
       )
