@@ -63,11 +63,12 @@ type AppTileProps = Readonly<{
   detail?: string;
   onPress: () => void;
   icon: string;
+  testID: string;
 }>;
 
-function AppTile({icon, title, detail, onPress}: AppTileProps): React.JSX.Element {
+function AppTile({icon, title, detail, onPress, testID}: AppTileProps): React.JSX.Element {
   return (
-    <Pressable accessibilityLabel={detail === undefined ? title : `${title}, ${detail}`} accessibilityRole="button" onPress={onPress} style={styles.appTile} testID="metro-harness-shell">
+    <Pressable accessibilityLabel={detail === undefined ? title : `${title}, ${detail}`} accessibilityRole="button" onPress={onPress} style={styles.appTile} testID={testID}>
       <Text accessibilityElementsHidden style={styles.appIcon}>{icon}</Text>
       <Text numberOfLines={1} style={styles.appTitle}>{title}</Text>
       {detail === undefined ? null : <Text numberOfLines={1} style={styles.appDetail}>{detail}</Text>}
@@ -258,11 +259,11 @@ export function MetroHomeScreen({githubAccount, user, onOpenUser, accountIntro, 
           <View testID="metro-harnesses">
             <Text style={styles.sectionLabel}>OPEN A SESSION</Text>
             <View style={styles.toolRow}>
-              <AppTile icon=">_" title="Bare terminal" onPress={() => onOpen({title: 'Bare terminal', eyebrow: 'SHELL', command: buildZshCommand('mkdir -p /workspace/projects && cd /workspace/projects && exec zsh -l'), toolchain: 'shell'})} />
+              <AppTile icon=">_" testID="metro-harness-shell" title="Bare terminal" onPress={() => onOpen({title: 'Bare terminal', eyebrow: 'SHELL', command: buildZshCommand('mkdir -p /workspace/projects && cd /workspace/projects && exec zsh -l'), toolchain: 'shell'})} />
             </View>
 
             <View style={styles.toolRow}>
-              <AppTile icon="🌐" title="Remote Access" onPress={() => {
+              <AppTile icon="🌐" testID="metro-remote-access" title="Remote Access" onPress={() => {
                 // Directly route to websocket
                 if (typeof onOpen === 'function') {
                   // Use a special target that routes to websocket

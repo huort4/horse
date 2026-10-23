@@ -231,7 +231,6 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
   const [keyboardVisible, setKeyboardVisible] = React.useState(Keyboard.isVisible());
   const keyboardVisibleRef = React.useRef(keyboardVisible);
   const lastExpandedViewportRef = React.useRef<TerminalViewport | undefined>(undefined);
-  const [transcriptPagerOpen, setTranscriptPagerOpen] = React.useState(false);
   const size = terminalSize(
     viewport.height > 0 ? viewport.height / TERMINAL_CELL_HEIGHT : TERMINAL_SESSION_DEFAULT_ROWS,
     viewport.width > 0 ? viewport.width / cellWidth : TERMINAL_SESSION_DEFAULT_COLUMNS,
@@ -978,20 +977,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
 
   const sendPageKey = React.useCallback((direction: 'up' | 'down') => {
     const sequence = direction === 'up' ? '\u001b[5~' : '\u001b[6~';
-    if (false && direction === 'up' && !transcriptPagerOpen) {
-      setTranscriptPagerOpen(true);
-      void (async () => {
-        await write('\u0014');
-        await write(sequence);
-      })();
-      return;
-    }
     void write(sequence);
-  }, [toolchain, transcriptPagerOpen, write]);
-
-  const toggleCodexTranscriptPager = React.useCallback(() => {
-    setTranscriptPagerOpen(open => !open);
-    void write('\u0014');
   }, [write]);
 
   const handleOutputSwipe = React.useCallback((direction: 'up' | 'down') => {
@@ -1232,10 +1218,7 @@ export function TerminalScreen({client: providedClient, runtime = undefined, onB
             onTerminalKey={sendTerminalKey}
             onToggleAlt={toggleAlt}
             onToggleCtrl={toggleCtrl}
-            onToggleTranscriptPager={toggleCodexTranscriptPager}
             running={running}
-            toolchain={toolchain}
-            transcriptPagerOpen={transcriptPagerOpen}
           />}
         </KeyboardAvoidingView>
       </View>

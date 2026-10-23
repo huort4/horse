@@ -6,7 +6,7 @@ export type InstallFailureKind = 'offline' | 'network' | 'storage' | 'permission
 
 export type InstallFailure = Readonly<{
   kind: InstallFailureKind;
-  /** The last provisioning stage, e.g. `codex_failed`. */
+  /** The last provisioning stage, e.g. `shell_failed`. */
   stage?: string;
   /** The end of the install log, cleaned for reading. */
   log?: string;

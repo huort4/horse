@@ -192,8 +192,7 @@ class RemoteAccessTest {
       assertEquals(listOf("horus-remote-access", "horus", "1000", "1000", "8022", ""), launch.argv.takeLast(6))
       val script = launch.argv[launch.argv.indexOf("horus-remote-access") - 1]
       assertTrue(script.contains(ProotSessionLauncher.DOTNET_ENV_SCRIPT))
-      assertTrue(script.contains(ProotSessionLauncher.ZSH_EXIT_SCRIPT))
-      for (terminator in listOf("HORUS_SHELL", "HORUS_INSTALLER", "HORUS_ZSH")) {
+      for (terminator in listOf("HORUS_SHELL")) {
         assertEquals("$terminator must terminate its heredoc at column zero", 1, script.lines().count { it == terminator })
         assertFalse(script.lines().any { it.trim() == terminator && it != terminator })
       }
@@ -203,7 +202,7 @@ class RemoteAccessTest {
       assertTrue(script.contains("-p \"127.0.0.1:"))
       assertTrue(script.contains("dropbear -F -E -s -w "))
       assertTrue(script.contains("busybox su -s /bin/sh -c"))
-      // Debian's zsh is pointed at the zshrc.d snippets (the Claude wrapper).
+      // Debian's zsh is pointed at the zshrc.d snippets (the shell snippets).
       assertTrue(script.contains("/etc/zsh/zshrc.d/*.zsh(N)"))
       assertThrows(IllegalArgumentException::class.java) {
         ProotSessionLauncher(runtime, File(base, "scratch"), hostProc, hostDev)

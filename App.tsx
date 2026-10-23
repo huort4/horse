@@ -61,7 +61,7 @@ function isHarnessTarget(target: MetroLaunchTarget): boolean {
   return false;
 }
 
-function App(): React.JSX.Element {
+function App(): React.JSX.Element | null {
   const [route, setRoute] = React.useState<AppRoute>('boot');
   const routeRef = React.useRef(route);
   routeRef.current = route;

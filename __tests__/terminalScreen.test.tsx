@@ -141,11 +141,11 @@ describe('TerminalScreen', () => {
     const runtime = fakeRuntime();
     runtime.spec.startSession = jest.fn(runtime.spec.startSession);
     let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
-    await ReactTestRenderer.act(async () => { renderer = ReactTestRenderer.create(<TerminalScreen client={new TerminalSessionClient(runtime.spec)} runtime={runtime.spec} toolchain="codex" sessionCommand="codex" />); });
+    await ReactTestRenderer.act(async () => { renderer = ReactTestRenderer.create(<TerminalScreen client={new TerminalSessionClient(runtime.spec)} runtime={runtime.spec} toolchain="shell" sessionCommand="zsh -l" />); });
     await ReactTestRenderer.act(async () => { await flushAsync(); });
     expect(runtime.spec.provisionToolchain).not.toHaveBeenCalled();
     expect(runtime.spec.startSession).toHaveBeenCalledTimes(1);
-    expect(runtime.spec.startSession).toHaveBeenCalledWith(expect.objectContaining({command: 'codex', toolchain: 'codex'}));
+    expect(runtime.spec.startSession).toHaveBeenCalledWith(expect.objectContaining({command: 'zsh -l', toolchain: 'shell'}));
     await ReactTestRenderer.act(async () => { renderer?.unmount(); });
   });
 
@@ -277,44 +277,6 @@ describe('TerminalScreen', () => {
     expect(runtime.listeners).toHaveLength(0);
   });
 
-  test('keeps OpenCode startup visible until its first nonblank alternate-screen frame', async () => {
-    const runtime = fakeRuntime();
-    const client = new TerminalSessionClient(runtime.spec, handler => {
-      runtime.listeners.push(handler);
-      return () => { const index = runtime.listeners.indexOf(handler); if (index >= 0) runtime.listeners.splice(index, 1); };
-    });
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    await ReactTestRenderer.act(async () => {
-      renderer = ReactTestRenderer.create(
-        <TerminalScreen client={client} runtime={runtime.spec} runtimeReady toolchain="opencode" sessionCommand="opencode" />,
-      );
-      await flushAsync();
-    });
-    expect(renderer.root.findByType(TerminalGrid).props.frame).toBeUndefined();
-    expect(renderer.root.findAllByProps({testID: 'terminal-output-grid'})).toHaveLength(0);
-
-    await ReactTestRenderer.act(async () => {
-      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_TOOLCHAIN_')});
-      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 2, base64: encodeTestBase64('READY\n')});
-      await flushAsync();
-    });
-    await ReactTestRenderer.act(async () => {
-      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 3, base64: encodeTestBase64('\u001b[?1049h\u001b[2J\u001b[H')});
-      await flushAsync();
-    });
-    expect(renderer.root.findByType(TerminalGrid).props.frame.alternate).toBe(true);
-    expect(renderer.root.findAllByProps({testID: 'terminal-startup-progress'}).length).toBeGreaterThan(0);
-    expect(renderer.root.findAllByProps({testID: 'harness-mark-opencode'}).length).toBeGreaterThan(0);
-
-    await ReactTestRenderer.act(async () => {
-      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 4, base64: encodeTestBase64('OpenCode')});
-      await flushAsync();
-    });
-    expect(renderer.root.findAllByProps({testID: 'terminal-startup-progress'})).toHaveLength(0);
-    expect(rowText(renderer)).toContain('OpenCode');
-    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
-  });
-
   test('starts GitHub with its installer attached to the visible session', async () => {
     const runtime = fakeRuntime();
     runtime.spec.startSession = jest.fn(runtime.spec.startSession);
@@ -389,7 +351,7 @@ describe('TerminalScreen', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
       renderer = ReactTestRenderer.create(
-        <TerminalScreen client={client} onHome={onHome} runtime={runtime.spec} runtimeReady sessionCommand="codex" toolchain="codex" />,
+        <TerminalScreen client={client} onHome={onHome} runtime={runtime.spec} runtimeReady sessionCommand="zsh -l" toolchain="shell" />,
       );
       await flushAsync();
     });
@@ -401,11 +363,11 @@ describe('TerminalScreen', () => {
     expect(has('terminal-app-exited')).toBe(false);
 
     await ReactTestRenderer.act(async () => {
-      runtime.emit({type: 'exit', sessionId: 's-1-1', reason: 'process_exit', exitCode: 1});
+      runtime.emit({type: 'exit', sessionId: 's-1-1', reason: 'process_exit', exitCode: 137});
       await flushAsync();
     });
     expect(has('terminal-app-exited')).toBe(true);
-    expect(renderer.root.findByProps({testID: 'terminal-app-exited-detail'}).props.children).toBe('Exit code 1');
+    expect(renderer.root.findByProps({testID: 'terminal-app-exited-detail'}).props.children).toBe('Exit code 137');
     expect(renderer.root.findByProps({testID: 'terminal-app-exited-output'}).props.children).toContain('Error: failed to read start time');
     // A line the terminal soft-wrapped is shown whole, not broken mid-word.
     expect(renderer.root.findByProps({testID: 'terminal-app-exited-output'}).props.children).toContain(`see https://example.com/${'x'.repeat(300)}/end`);
@@ -416,7 +378,7 @@ describe('TerminalScreen', () => {
     });
     expect(openURL).toHaveBeenCalledTimes(1);
     const issueUrl = String(openURL.mock.calls[0][0]);
-    expect(issueUrl.startsWith('https://github.com/scarif-labs/horus/issues/new?title=Codex%20quit%20unexpectedly&body=')).toBe(true);
+    expect(issueUrl.startsWith('https://github.com/scarif-labs/horus/issues/new?title=Linux%20shell%20quit%20unexpectedly&body=')).toBe(true);
     expect(decodeURIComponent(issueUrl)).toContain('Error: failed to read start time');
 
     await ReactTestRenderer.act(async () => {
@@ -443,7 +405,7 @@ describe('TerminalScreen', () => {
     });
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
-      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="claude" toolchain="claude" />);
+      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="zsh -l" toolchain="shell" />);
       await flushAsync();
     });
     await ReactTestRenderer.act(async () => {
@@ -514,7 +476,7 @@ describe('TerminalScreen', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
       renderer = ReactTestRenderer.create(
-        <TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="codex" toolchain="codex" />,
+        <TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="zsh -l" toolchain="shell" />,
       );
       await flushAsync();
     });
@@ -529,7 +491,7 @@ describe('TerminalScreen', () => {
       renderer.root.findByProps({testID: `terminal-install-step-${index}`}).findAllByType(ActivityIndicator).length > 0;
 
     expect(has('terminal-install-progress')).toBe(false);
-    await emitText(1, 'HORUS_INSTALL_TARGET=codex\nHORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=apk\n(1/7) Installing ada-libs\n');
+    await emitText(1, 'HORUS_INSTALL_TARGET=shell\nHORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=apk\n(1/7) Installing ada-libs\n');
     expect(has('terminal-install-progress')).toBe(true);
     expect(stepIsActive(1)).toBe(true);
 
@@ -541,17 +503,16 @@ describe('TerminalScreen', () => {
     expect(toggle().props.accessibilityLabel).toBe('Show install progress');
     await ReactTestRenderer.act(async () => { toggle().props.onPress(); });
     expect(has('terminal-install-progress')).toBe(true);
-    expect(has('harness-mark-codex')).toBe(true);
 
-    await emitText(2, 'HORUS_INSTALL_STAGE=base_ready\nHORUS_INSTALL_STAGE=codex\n');
+    await emitText(2, 'HORUS_INSTALL_STAGE=base_ready\nHORUS_INSTALL_STAGE=shell\n');
     expect(stepIsActive(2)).toBe(true);
     expect(has('terminal-install-download')).toBe(false);
-    await emitText(3, 'Downloading Codex… 37% (55 of 148 MB)\n');
+    await emitText(3, 'Downloading Linux rootfs… 37% (55 of 148 MB)\n');
     const download = renderer.root.findAllByProps({testID: 'terminal-install-download'})[0];
     expect(download.props.children).toBe('37% downloaded');
 
     // A failed stage hands the screen back to the transcript and its error.
-    await emitText(4, 'HORUS_INSTALL_STAGE=codex_failed\n');
+    await emitText(4, 'HORUS_INSTALL_STAGE=shell_failed\n');
     expect(has('terminal-install-progress')).toBe(false);
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
@@ -567,13 +528,13 @@ describe('TerminalScreen', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
       renderer = ReactTestRenderer.create(
-        <TerminalScreen client={client} onHome={onHome} runtime={runtime.spec} runtimeReady sessionCommand="codex" toolchain="codex" />,
+        <TerminalScreen client={client} onHome={onHome} runtime={runtime.spec} runtimeReady sessionCommand="zsh -l" toolchain="shell" />,
       );
       await flushAsync();
     });
     const has = (testID: string) => renderer.root.findAllByProps({testID}).length > 0;
     await ReactTestRenderer.act(async () => {
-      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=codex\nDownloading Codex… 1 MB\nDownloading Codex… 2 MB\nnpm error code EAI_AGAIN\nnpm error request to https://registry.npmjs.org/@openai%2fcodex failed\nHORUS_INSTALL_STAGE=codex_failed\nHORUS_INSTALL_COMMAND_EXIT=1\n')});
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=shell\nDownloading Linux rootfs… 1 MB\nDownloading Linux rootfs… 2 MB\nnpm error code EAI_AGAIN\nnpm error request to https://registry.npmjs.org/@openai%2fcodex failed\nHORUS_INSTALL_STAGE=shell_failed\nHORUS_INSTALL_COMMAND_EXIT=1\n')});
       await flushAsync();
     });
     await ReactTestRenderer.act(async () => {
@@ -587,7 +548,7 @@ describe('TerminalScreen', () => {
     expect(log).toContain('npm error code EAI_AGAIN');
     expect(log).not.toContain('HORUS_');
     expect(log).not.toContain('1 MB');
-    expect(log).toContain('Downloading Codex… 2 MB');
+    expect(log).toContain('Downloading Linux rootfs… 2 MB');
 
     await ReactTestRenderer.act(async () => {
       renderer.root.findByProps({testID: 'terminal-install-back'}).props.onPress();
@@ -609,7 +570,7 @@ describe('TerminalScreen', () => {
       changeAppState = handler as (state: AppStateStatus) => void;
       return {remove: () => undefined} as ReturnType<typeof AppState.addEventListener>;
     });
-    const failedInstall = 'npm error code EAI_AGAIN\nHORUS_INSTALL_COMMAND_EXIT=1\nHORUS_INSTALL_STAGE=opencode_failed\n';
+    const failedInstall = 'npm error code EAI_AGAIN\nHORUS_INSTALL_COMMAND_EXIT=1\nHORUS_INSTALL_STAGE=shell_failed\n';
     let subscriptions = 0;
     runtime.spec.subscribeSessionEvents = jest.fn(async (request: {requestId: string; sessionId: string}) => {
       subscriptions += 1;
@@ -635,13 +596,13 @@ describe('TerminalScreen', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
       renderer = ReactTestRenderer.create(
-        <TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="opencode" toolchain="opencode" />,
+        <TerminalScreen client={client} runtime={runtime.spec} runtimeReady sessionCommand="zsh -l" toolchain="shell" />,
       );
       await flushAsync();
     });
     const has = (testID: string) => renderer.root.findAllByProps({testID}).length > 0;
     await ReactTestRenderer.act(async () => {
-      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=opencode\n')});
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=shell\n')});
       await flushAsync();
     });
     await ReactTestRenderer.act(async () => {
@@ -663,7 +624,7 @@ describe('TerminalScreen', () => {
   test('shows why an install failed when reopening a session whose install failed', async () => {
     const runtime = fakeRuntime();
     runtime.spec.subscribeSessionEvents = jest.fn(async (request: {requestId: string; sessionId: string}) => {
-      runtime.emit({type: 'output', sessionId: request.sessionId, seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nnpm error code ENOSPC\nHORUS_INSTALL_STAGE=codex_failed\n')});
+      runtime.emit({type: 'output', sessionId: request.sessionId, seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nnpm error code ENOSPC\nHORUS_INSTALL_STAGE=shell_failed\n')});
       return {
         requestId: request.requestId,
         status: 'success' as const,
@@ -684,7 +645,7 @@ describe('TerminalScreen', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
       renderer = ReactTestRenderer.create(
-        <TerminalScreen client={client} existingSessionId="s-1-1" runtime={runtime.spec} runtimeReady toolchain="codex" />,
+        <TerminalScreen client={client} existingSessionId="s-1-1" runtime={runtime.spec} runtimeReady toolchain="shell" />,
       );
       await flushAsync();
     });
@@ -703,12 +664,12 @@ describe('TerminalScreen', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
       renderer = ReactTestRenderer.create(
-        <TerminalScreen client={client} existingSessionId="s-1-1" runtime={runtime.spec} runtimeReady toolchain="codex" />,
+        <TerminalScreen client={client} existingSessionId="s-1-1" runtime={runtime.spec} runtimeReady toolchain="shell" />,
       );
       await flushAsync();
     });
     await ReactTestRenderer.act(async () => {
-      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=codex\n')});
+      runtime.emit({type: 'output', sessionId: 's-1-1', seq: 1, base64: encodeTestBase64('HORUS_INSTALL_STAGE=start\nHORUS_INSTALL_STAGE=shell\n')});
       await flushAsync();
     });
     expect(renderer.root.findAllByProps({testID: 'terminal-install-progress'}).length).toBeGreaterThan(0);
@@ -950,7 +911,7 @@ describe('TerminalScreen', () => {
     runtime.spec.listTerminalSessions = jest.fn().mockImplementation(async (request: {requestId: string}) => ({
       requestId: request.requestId,
       status: 'success' as const,
-      sessions: [{sessionId: 's-1-1', toolchain: 'opencode' as const, startedAtMs: Date.now() - 3 * 60_000}],
+      sessions: [{sessionId: 's-1-1', toolchain: 'github' as const, startedAtMs: Date.now() - 3 * 60_000}],
     }));
     const client = new TerminalSessionClient(runtime.spec, handler => {
       runtime.listeners.push(handler);
@@ -959,14 +920,14 @@ describe('TerminalScreen', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
       renderer = ReactTestRenderer.create(
-        <TerminalScreen client={client} runtime={runtime.spec} runtimeReady toolchain="codex" />,
+        <TerminalScreen client={client} runtime={runtime.spec} runtimeReady toolchain="shell" />,
       );
       await flushAsync();
     });
 
-    expect(renderer.root.findByProps({testID: 'session-limit-session-title-s-1-1'}).props.children).toBe('OpenCode');
+    expect(renderer.root.findByProps({testID: 'session-limit-session-title-s-1-1'}).props.children).toBe('GitHub CLI');
     expect(renderer.root.findByProps({testID: 'session-limit-session-meta-s-1-1'}).props.children).toEqual(['Running ', '3 min']);
-    expect(renderer.root.findByProps({testID: 'session-limit-warning-title'}).props.children).toEqual(['Close an app to open ', 'Codex']);
+    expect(renderer.root.findByProps({testID: 'session-limit-warning-title'}).props.children).toEqual(['Close an app to open ', 'Linux shell']);
     // The key bar has nothing to type into while the limit screen covers the terminal.
     expect(renderer.root.findAllByProps({testID: 'terminal-key-return'})).toHaveLength(0);
     await ReactTestRenderer.act(async () => {
@@ -1241,37 +1202,6 @@ describe('TerminalScreen', () => {
     await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
   });
 
-  test('opens and closes Codex transcript history from the key strip', async () => {
-    const runtime = fakeRuntime();
-    runtime.spec.writeSessionInput = jest.fn(runtime.spec.writeSessionInput);
-    const client = new TerminalSessionClient(runtime.spec, handler => {
-      runtime.listeners.push(handler);
-      return () => { runtime.listeners.splice(runtime.listeners.indexOf(handler), 1); };
-    });
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    await ReactTestRenderer.act(async () => {
-      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} toolchain="codex" />);
-      await flushAsync();
-    });
-    const press = async (testID: string) => {
-      await ReactTestRenderer.act(async () => {
-        renderer.root.findByProps({testID}).props.onPress();
-        await flushAsync();
-      });
-    };
-
-    expect(renderer.root.findByProps({testID: 'terminal-key-transcript-history'}).props.accessibilityLabel).toBe('Open transcript history');
-    await press('terminal-key-transcript-history');
-    expect(renderer.root.findByProps({testID: 'terminal-key-transcript-history'}).props.accessibilityLabel).toBe('Close transcript history');
-    await press('terminal-key-transcript-history');
-    await press('terminal-key-esc');
-    expect(renderer.root.findByProps({testID: 'terminal-key-transcript-history'}).props.accessibilityLabel).toBe('Open transcript history');
-    const writes = (runtime.spec.writeSessionInput as jest.Mock).mock.calls.map(call => new TextDecoder().decode(decodeTestBase64(call[0].base64)));
-    expect(writes).toEqual(['\u0014', '\u0014', '\u001b']);
-
-    await ReactTestRenderer.act(async () => { renderer.unmount(); await flushAsync(); });
-  });
-
   test('writes each key once and renders split zsh redraws as one character', async () => {
     const runtime = fakeRuntime();
     runtime.spec.writeSessionInput = jest.fn(runtime.spec.writeSessionInput);
@@ -1502,7 +1432,7 @@ describe('TerminalScreen', () => {
     runtime.spec.subscribeSessionEvents = jest.fn(runtime.spec.subscribeSessionEvents);
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
-      renderer = ReactTestRenderer.create(<MeasuredTerminalScreen client={new TerminalSessionClient(runtime.spec)} existingSessionId="s-1-1" runtime={runtime.spec} runtimeReady toolchain="codex" />);
+      renderer = ReactTestRenderer.create(<MeasuredTerminalScreen client={new TerminalSessionClient(runtime.spec)} existingSessionId="s-1-1" runtime={runtime.spec} runtimeReady toolchain="shell" />);
     });
     await ReactTestRenderer.act(async () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
@@ -1600,7 +1530,7 @@ describe('TerminalScreen', () => {
     });
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => {
-      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} toolchain="codex" />);
+      renderer = ReactTestRenderer.create(<TerminalScreen client={client} runtime={runtime.spec} toolchain="shell" />);
       await flushAsync();
     });
 

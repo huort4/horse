@@ -510,7 +510,6 @@ function KeysStep({step, onDone}: Readonly<{step: number; onDone: () => void}>):
     setAlt(false);
     setInfo(next);
   }, []);
-  const noop = React.useCallback(() => undefined, []);
 
   return (
     <AuthScreenLayout brandTestID="setup" footer={<PrimaryButton label="START USING HORUS  →" onPress={onDone} testID="onboarding-done" />} pinned screenTestID="onboarding-keys">
@@ -533,10 +532,7 @@ function KeysStep({step, onDone}: Readonly<{step: number; onDone: () => void}>):
             onTerminalKey={value => { const next = TERMINAL_KEY_INFO[value]; if (next !== undefined) show(next); }}
             onToggleAlt={() => { setAlt(value => !value); setCtrl(false); setInfo(KEY_INFO.alt); }}
             onToggleCtrl={() => { setCtrl(value => !value); setAlt(false); setInfo(KEY_INFO.ctrl); }}
-            onToggleTranscriptPager={noop}
-            running
-            toolchain="shell"
-            transcriptPagerOpen={false} />
+            running />
         </View>
         <View style={styles.gestures}>
           {GESTURES.map(gesture => (

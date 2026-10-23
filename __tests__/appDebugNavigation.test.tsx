@@ -85,7 +85,7 @@ jest.mock('../src/terminal/TerminalScreen', () => ({
 }));
 
 jest.mock('../src/ui/MetroHomeScreen', () => ({
-  MetroHomeScreen: ({onOpen, onOpenGithubLogin, onOpenGithubAccount, onResumeSession, githubAccount, onOpenUser}: {onOpenUser?: () => void; onOpen: (target: {title: string; eyebrow: string; toolchain?: 'claude' | 'github'; command?: string; kind?: 'files'}) => void; onOpenGithubLogin: () => void; onOpenGithubAccount?: () => void; onResumeSession?: (session: {sessionId: string; toolchain: string; startedAtMs: number; command?: string}) => void; githubAccount?: {username: string; avatarUrl?: string}}) => require('react').createElement(
+  MetroHomeScreen: ({onOpen, onOpenGithubLogin, onOpenGithubAccount, onResumeSession, githubAccount, onOpenUser}: {onOpenUser?: () => void; onOpen: (target: {title: string; eyebrow: string; toolchain?: 'shell' | 'github'; command?: string; kind?: 'files'}) => void; onOpenGithubLogin: () => void; onOpenGithubAccount?: () => void; onResumeSession?: (session: {sessionId: string; toolchain: string; startedAtMs: number; command?: string}) => void; githubAccount?: {username: string; avatarUrl?: string}}) => require('react').createElement(
     require('react-native').View,
     {testID: 'metro-home'},
     require('react').createElement(require('react-native').Pressable, {testID: 'metro-open-user', onPress: onOpenUser}),
@@ -117,11 +117,11 @@ jest.mock('../src/ui/MetroHomeScreen', () => ({
     ),
     require('react').createElement(
       require('react-native').Pressable,
-      {testID: 'metro-open-claude', onPress: () => onOpen({title: 'Claude Code', eyebrow: 'AI WORKBENCH', command: 'claude', toolchain: 'claude'})},
+      {testID: 'metro-open-shell', onPress: () => onOpen({title: 'Bare terminal', eyebrow: 'SHELL', command: 'zsh -l', toolchain: 'shell'})},
     ),
     require('react').createElement(
       require('react-native').Pressable,
-      {testID: 'metro-resume-codex', onPress: () => onResumeSession?.({sessionId: 's-1-2', toolchain: 'codex', startedAtMs: 0, command: 'cd /workspace/projects/demo && exec codex'})},
+      {testID: 'metro-resume-shell', onPress: () => onResumeSession?.({sessionId: 's-1-2', toolchain: 'shell', startedAtMs: 0, command: 'cd /workspace/projects/demo && exec zsh -l'})},
     ),
   ),
 }));
@@ -256,14 +256,14 @@ describe('debug navigation', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
-      renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
+      renderer.root.findByProps({testID: 'metro-open-shell'}).props.onPress();
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
       renderer.root.findByProps({testID: 'project-hub-create-sample'}).props.onPress();
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
-    expect(renderer.root.findByProps({testID: 'debug-terminal'}).props.toolchain).toBe('claude');
+    expect(renderer.root.findByProps({testID: 'debug-terminal'}).props.toolchain).toBe('shell');
     const lockSession = jest.mocked(useBackgroundSessionLock).mock.calls.at(-1)?.[1];
     expect(lockSession).toBeDefined();
     await ReactTestRenderer.act(async () => {
@@ -335,15 +335,15 @@ describe('debug navigation', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
-      renderer.root.findByProps({testID: 'metro-resume-codex'}).props.onPress();
+      renderer.root.findByProps({testID: 'metro-resume-shell'}).props.onPress();
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
 
-    // "Open again" after Codex quits starts this command, not a plain shell.
+    // "Open again" after the shell exits starts this command, not a plain shell.
     const terminal = renderer.root.findByProps({testID: 'debug-terminal'});
     expect(terminal.props.existingSessionId).toBe('s-1-2');
-    expect(terminal.props.toolchain).toBe('codex');
-    expect(terminal.props.sessionCommand).toBe('cd /workspace/projects/demo && exec codex');
+    expect(terminal.props.toolchain).toBe('shell');
+    expect(terminal.props.sessionCommand).toBe('cd /workspace/projects/demo && exec zsh -l');
     await ReactTestRenderer.act(async () => {
       renderer.unmount();
       await Promise.resolve();
@@ -427,7 +427,7 @@ describe('debug navigation', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
-      renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
+      renderer.root.findByProps({testID: 'metro-open-shell'}).props.onPress();
       for (let index = 0; index < 12; index += 1) await Promise.resolve();
     });
     // Signed out, opening the chooser does not query GitHub on its own.
@@ -482,17 +482,17 @@ describe('debug navigation', () => {
     expect(renderer.root.findByProps({testID: 'metro-github-avatar'}).props.source.uri).toBe('https://avatars.githubusercontent.com/u/1');
 
     await ReactTestRenderer.act(async () => {
-      renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
+      renderer.root.findByProps({testID: 'metro-open-shell'}).props.onPress();
       await Promise.resolve();
     });
-    expect(renderer.root.findByProps({testID: 'project-hub-harness'}).props.children).toBe('Claude Code');
+    expect(renderer.root.findByProps({testID: 'project-hub-harness'}).props.children).toBe('Bare terminal');
 
     await ReactTestRenderer.act(async () => {
       renderer.root.findByProps({testID: 'project-hub-create-sample'}).props.onPress();
       await Promise.resolve();
     });
     const terminal = renderer.root.findByProps({testID: 'debug-terminal'});
-    expect(terminal.props.toolchain).toBe('claude');
+    expect(terminal.props.toolchain).toBe('shell');
     expect(terminal.props.sessionCommand).toContain('/workspace/projects/sample');
     expect(terminal.props.sessionCommand).toContain('mkdir -p');
 
@@ -516,7 +516,7 @@ describe('debug navigation', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
-      renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
+      renderer.root.findByProps({testID: 'metro-open-shell'}).props.onPress();
       for (let index = 0; index < 12; index += 1) await Promise.resolve();
     });
     // Signed out, opening the chooser does not query GitHub on its own.
@@ -632,7 +632,7 @@ describe('debug navigation', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
-      renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
+      renderer.root.findByProps({testID: 'metro-open-shell'}).props.onPress();
       await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
@@ -657,8 +657,8 @@ describe('debug navigation', () => {
       await Promise.resolve();
     });
     terminal = renderer.root.findByProps({testID: 'debug-terminal'});
-    expect(terminal.props.toolchain).toBe('claude');
-    expect(terminal.props.screenTitle).toBe('Claude Code');
+    expect(terminal.props.toolchain).toBe('shell');
+    expect(terminal.props.screenTitle).toBe('Bare terminal');
     expect(terminal.props.sessionCommand).toContain('/workspace/projects/hello-world');
 
     await ReactTestRenderer.act(async () => { renderer.unmount(); await Promise.resolve(); });
@@ -675,7 +675,7 @@ describe('debug navigation', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
-      renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
+      renderer.root.findByProps({testID: 'metro-open-shell'}).props.onPress();
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
@@ -729,7 +729,7 @@ describe('debug navigation', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
-      renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
+      renderer.root.findByProps({testID: 'metro-open-shell'}).props.onPress();
       for (let index = 0; index < 12; index += 1) await Promise.resolve();
     });
 
@@ -762,7 +762,7 @@ describe('debug navigation', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
-      renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
+      renderer.root.findByProps({testID: 'metro-open-shell'}).props.onPress();
       for (let index = 0; index < 20; index += 1) await Promise.resolve();
     });
 
@@ -784,7 +784,7 @@ describe('debug navigation', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
-      renderer.root.findByProps({testID: 'metro-open-claude'}).props.onPress();
+      renderer.root.findByProps({testID: 'metro-open-shell'}).props.onPress();
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     await ReactTestRenderer.act(async () => {
