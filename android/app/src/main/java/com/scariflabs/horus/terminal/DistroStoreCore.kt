@@ -394,16 +394,7 @@ class DistroStoreCore(
       if (!paths.harnessHomes.mkdirs() && !paths.harnessHomes.isDirectory) {
         throw IOException("cannot recreate harness homes")
       }
-      listOf(
-        TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE,
-        TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX,
-        TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE,
-      ).forEach { harness ->
-        val harnessHome = paths.harnessHome(harness)
-        if (!harnessHome.mkdirs() && !harnessHome.isDirectory) {
-          throw IOException("cannot recreate $harness home")
-        }
-      }
+      // AI harness homes removed — only shell/github remain.
     }
     if (deleteWorkspaces) {
       removedWorkspaces = paths.defaultWorkspace.exists()

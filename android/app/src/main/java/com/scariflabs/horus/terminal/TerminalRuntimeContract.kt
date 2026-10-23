@@ -31,16 +31,10 @@ object TerminalRuntimeContract {
   const val RESET_SCOPE_ALL_USER_DATA = "all-user-data"
   const val TOOLCHAIN_TARGET_SHELL = "shell"
   const val TOOLCHAIN_TARGET_GITHUB = "github"
-  const val TOOLCHAIN_TARGET_CLAUDE = "claude"
-  const val TOOLCHAIN_TARGET_CODEX = "codex"
-  const val TOOLCHAIN_TARGET_OPENCODE = "opencode"
 
   private val TOOLCHAIN_TARGETS = setOf(
     TOOLCHAIN_TARGET_SHELL,
     TOOLCHAIN_TARGET_GITHUB,
-    TOOLCHAIN_TARGET_CLAUDE,
-    TOOLCHAIN_TARGET_CODEX,
-    TOOLCHAIN_TARGET_OPENCODE,
   )
 
   fun isValidRuntimeState(state: String?): Boolean = RUNTIME_STATES.contains(state)

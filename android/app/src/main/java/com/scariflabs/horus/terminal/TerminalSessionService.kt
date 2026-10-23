@@ -1265,9 +1265,6 @@ class TerminalSessionService : Service() {
   }
 
   private fun notificationLabel(record: TerminalSessionJournal.Record): String = when (record.toolchainTarget) {
-    TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "Claude Code"
-    TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "Codex"
-    TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "OpenCode"
     TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB -> "GitHub CLI"
     else -> "Bare terminal"
   }
@@ -1416,9 +1413,6 @@ class TerminalSessionService : Service() {
     val logDirectory = File(home, ".cache/horus")
     val logName = when (target) {
       TerminalRuntimeContract.TOOLCHAIN_TARGET_GITHUB -> "github-install.log"
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE -> "claude-install.log"
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX -> "codex-install.log"
-      TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE -> "opencode-install.log"
       else -> "alpine-bootstrap.log"
     }
     val targetLog = File(logDirectory, logName).let { file ->
@@ -1436,9 +1430,6 @@ class TerminalSessionService : Service() {
     }
     return when (stage) {
       "github_failed" -> "toolchain_github_install_failed"
-      "claude_failed" -> "toolchain_install_failed"
-      "codex_failed" -> "toolchain_codex_install_failed"
-      "opencode_failed" -> "toolchain_opencode_install_failed"
       "normalize_failed" -> "toolchain_normalization_failed"
       "verify_failed" -> "toolchain_incomplete"
       "apk_failed" -> "toolchain_install_failed"
@@ -1593,10 +1584,7 @@ class TerminalSessionService : Service() {
 
   private fun isHarnessSession(sessionId: String): Boolean = isHarnessTarget(sessionRecords[sessionId]?.toolchainTarget)
 
-  private fun isHarnessTarget(target: String?): Boolean =
-    target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CLAUDE ||
-      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_CODEX ||
-      target == TerminalRuntimeContract.TOOLCHAIN_TARGET_OPENCODE
+  private fun isHarnessTarget(target: String?): Boolean = false
 
   private fun sessionStartedAt(record: TerminalSessionJournal.Record): String = DateUtils.formatDateTime(
     this,

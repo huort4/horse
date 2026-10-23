@@ -70,9 +70,7 @@ export const TERMINAL_RUNTIME_ERROR_CODES = [
   'toolchain_node_version',
   'toolchain_permissions',
   'toolchain_github_install_failed',
-  'toolchain_codex_install_failed',
-  'toolchain_opencode_install_failed',
-  'toolchain_normalization_failed',
+      'toolchain_normalization_failed',
   'not_installed',
 ] as const;
 
@@ -100,9 +98,7 @@ export type TerminalRuntimeErrorCode =
   | 'toolchain_node_version'
   | 'toolchain_permissions'
   | 'toolchain_github_install_failed'
-  | 'toolchain_codex_install_failed'
-  | 'toolchain_opencode_install_failed'
-  | 'toolchain_normalization_failed'
+      | 'toolchain_normalization_failed'
   | 'not_installed';
 
 export type TerminalRuntimeStatusResponse = {
@@ -212,12 +208,9 @@ export type ProvisionToolchainRequest = {
 export const TERMINAL_TOOLCHAIN_TARGETS = [
   'shell',
   'github',
-  'claude',
-  'codex',
-  'opencode',
 ] as const;
 
-export type TerminalToolchainTarget = 'shell' | 'github' | 'claude' | 'codex' | 'opencode';
+export type TerminalToolchainTarget = 'shell' | 'github';
 
 export type ProvisionToolchainResponse = {
   requestId: string;

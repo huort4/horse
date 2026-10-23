@@ -2,9 +2,6 @@ import type {TerminalToolchainTarget} from '../native/NativeTerminalRuntime';
 import type {ActiveTerminalSession} from './session/sessionContract';
 
 function toolchainName(target: TerminalToolchainTarget, shellLabel: string): string {
-  if (target === 'claude') return 'Claude Code';
-  if (target === 'codex') return 'Codex';
-  if (target === 'opencode') return 'OpenCode';
   if (target === 'github') return 'GitHub CLI';
   return shellLabel;
 }
