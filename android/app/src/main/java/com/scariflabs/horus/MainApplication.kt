@@ -19,6 +19,7 @@ class MainApplication : Application(), ReactApplication {
       packageList =
         PackageList(this).packages.apply {
           add(com.scariflabs.horus.terminal.TerminalRuntimePackage())
+          add(HorusWebSocketPackage())   // ← این خط را اضافه کن
         },
     )
   }
