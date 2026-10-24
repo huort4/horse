@@ -10,6 +10,9 @@ export const HARNESS_LOGO_SOURCES = {} as const;
 
 export type HarnessLogo = never;
 
-export function HarnessMark({toolchain, size}: Readonly<{toolchain: TerminalToolchainTarget; size: number}>): React.JSX.Element {
+export function HarnessMark({
+  toolchain: _toolchain,
+  size,
+}: Readonly<{toolchain: TerminalToolchainTarget; size: number}>): React.JSX.Element {
   return <BrandMark accessible={false} size={size} />;
 }
