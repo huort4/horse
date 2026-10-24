@@ -33,14 +33,11 @@ import {setRemoteAccessEnabled} from './src/remote/remoteAccess';
 import {consumeLaunchSessionId} from './src/terminal/session/launchSession';
 import {sessionTitle} from './src/terminal/toolchainLabels';
 import {createRequestIdFactory} from './src/terminal/requestIds';
-
 type AppRoute = 'boot' | 'onboarding' | 'login' | 'home' | 'settings' | 'user' | 'add-user' | 'github-account' | 'projects' | 'files' | 'terminal' | 'websocket';
 type BootState = 'checking' | 'installing' | 'error';
-
 const BOOT_REQUEST_ID = 'horus-bootstrap-1';
 const IMPORT_REQUEST_ID = 'horus-import-1';
 const ACTIVATE_REQUEST_ID = 'horus-activate-1';
-
 /** The catalog rootfs id of a distribution; every distribution Horus offers has one. */
 function rootfsIdFor(distro: LinuxDistro): string {
   const entry = rootfsForDistro(distro);
@@ -49,18 +46,15 @@ function rootfsIdFor(distro: LinuxDistro): string {
 }
 const nextSessionRequestId = createRequestIdFactory('launcher');
 const BARE_SHELL_COMMAND = buildZshCommand(`mkdir -p ${WORKSPACE_PROJECTS_DIRECTORY} && cd ${WORKSPACE_PROJECTS_DIRECTORY} && exec zsh -l`);
-
 /** The one terminal whose hidden completion marker App is waiting for. */
 type PendingCompletion =
   | Readonly<{kind: 'clone'; marker: string; name: string; directory: string; harness: MetroLaunchTarget}>
   | Readonly<{kind: 'github-login'; marker: string; returnTo: 'home' | 'projects'}>
   | Readonly<{kind: 'github-logout'; marker: string}>;
-
-function isHarnessTarget(target: MetroLaunchTarget): boolean {
+function isHarnessTarget(_target: MetroLaunchTarget): boolean {
   // AI harnesses removed.
   return false;
 }
-
 function App(): React.JSX.Element | null {
   const [route, setRoute] = React.useState<AppRoute>('boot');
   const routeRef = React.useRef(route);
@@ -108,7 +102,6 @@ function App(): React.JSX.Element | null {
   const [retryCount, setRetryCount] = React.useState(0);
   const sessionClient = React.useMemo(() => new TerminalSessionClient(), []);
   const appMountedRef = React.useRef(false);
-
   React.useEffect(() => {
     appMountedRef.current = true;
     return () => {
@@ -117,14 +110,12 @@ function App(): React.JSX.Element | null {
       sessionClient.dispose();
     };
   }, [sessionClient]);
-
   const openTerminal = React.useCallback((target: MetroLaunchTarget, returnRoute: 'home' | 'projects' = 'home') => {
     setTerminalTarget(target);
     setTerminalInstanceKey(value => value + 1);
     setTerminalReturnRoute(returnRoute);
     setRoute('terminal');
   }, []);
-
   const openDebugTerminal = React.useCallback(() => {
     if (!__DEV__) return;
     // Bootstrap owns installation and PRoot readiness. Keep the loading route
@@ -133,7 +124,6 @@ function App(): React.JSX.Element | null {
     if (bootState === 'checking' || bootState === 'installing') return;
     openTerminal({title: 'Bare terminal', eyebrow: 'DEBUG / SHELL', command: BARE_SHELL_COMMAND, toolchain: 'shell'});
   }, [bootState, openTerminal]);
-
   React.useEffect(() => {
     let mounted = true;
     const bootstrap = async () => {
@@ -147,7 +137,6 @@ function App(): React.JSX.Element | null {
       if (!mounted) return;
       setGithubAccount(storedGithubAccount);
       setProjectConnected(storedGithubAccount !== undefined);
-
       let runtime = await readTerminalRuntimeStatus();
       if (!mounted) return;
       if (runtime.kind === 'error') {
@@ -195,7 +184,6 @@ function App(): React.JSX.Element | null {
       mounted = false;
     };
   }, [retryCount]);
-
   // Onboarding's rootfs step; on success the runtime is ready like after boot.
   const finishOnboardingRootfs = React.useCallback(async (installed: Awaited<ReturnType<typeof installRootfs>>): Promise<RootfsSetupResult> => {
     if (installed.kind !== 'success') return {kind: 'error', errorCode: installed.errorCode};
@@ -205,7 +193,6 @@ function App(): React.JSX.Element | null {
     setRuntimeReady(true);
     return {kind: 'success'};
   }, []);
-
   const onboardingActions = React.useMemo<OnboardingActions>(() => ({
     installRootfs: async distro => finishOnboardingRootfs(await installRootfs(BOOT_REQUEST_ID, undefined, {rootfsId: rootfsIdFor(distro)})),
     importRootfs: async distro => finishOnboardingRootfs(await importRootfs(IMPORT_REQUEST_ID, undefined, {rootfsId: rootfsIdFor(distro)})),
@@ -231,7 +218,6 @@ function App(): React.JSX.Element | null {
       setRoute('home');
     },
   }), [finishOnboardingRootfs]);
-
   // Signing in as a user also points new sessions at that user's distribution.
   const login = React.useCallback(async (user: ProfileUser, password: string) => {
     if (profile === null) {
@@ -266,7 +252,6 @@ function App(): React.JSX.Element | null {
     setLockNotice(undefined);
     setRoute('home');
   }, [profile, activeDistro, sessionClient, setPendingCompletion]);
-
   // Locking only hides the workspace. Running harnesses and shells keep
   // working behind the password screen and are in Recents after unlock.
   const lockSession = React.useCallback(() => {
@@ -275,7 +260,6 @@ function App(): React.JSX.Element | null {
     void updateUnlockGrant('revoke');
     setRoute('login');
   }, []);
-
   // Logging out ends every session, unlike the background lock.
   const [loginUser, setLoginUser] = React.useState<LinuxDistro | undefined>();
   const logout = React.useCallback(async (next?: ProfileUser): Promise<boolean> => {
@@ -296,11 +280,9 @@ function App(): React.JSX.Element | null {
     setRoute(__DEV__ ? 'home' : 'login');
     return true;
   }, [sessionClient, setPendingCompletion]);
-
   const authenticated = route === 'home' || route === 'settings' || route === 'user' || route === 'add-user' || route === 'github-account' || route === 'projects' || route === 'files' || route === 'terminal';
   useBackgroundSessionLock(!__DEV__ && profile !== null && authenticated, lockSession);
   useUnlockGrantAppState(!__DEV__ && profile !== null && authenticated);
-
   const leaveTerminal = React.useCallback(() => {
     const pending = pendingCompletionRef.current;
     if (pending !== undefined && pending.marker === terminalTarget.completionMarker) {
@@ -310,15 +292,11 @@ function App(): React.JSX.Element | null {
     }
     setRoute(terminalReturnRoute);
   }, [setPendingCompletion, terminalReturnRoute, terminalTarget.completionMarker]);
-
   const leaveProjects = React.useCallback(() => setRoute('home'), []);
-
   const leaveGithubAccount = React.useCallback(() => setRoute('home'), []);
-
   useHardwareBack(route === 'terminal', leaveTerminal);
   useHardwareBack(route === 'projects', leaveProjects);
   useHardwareBack(route === 'github-account', leaveGithubAccount);
-
   const openTarget = React.useCallback((target: MetroLaunchTarget) => {
     if (target.kind === 'files') {
       setRoute('files');
@@ -335,12 +313,10 @@ function App(): React.JSX.Element | null {
     }
     openTerminal(target, target.returnTo ?? 'home');
   }, [openTerminal]);
-
   const loadRecentSessions = React.useCallback(async (): Promise<readonly ActiveTerminalSession[] | undefined> => {
     const result = await sessionClient.listTerminalSessions(nextSessionRequestId('recents'));
     return result.kind === 'success' ? result.sessions : undefined;
   }, [sessionClient]);
-
   const terminateRecentSession = React.useCallback(async (sessionId: string): Promise<boolean> => {
     const result = await sessionClient.stopSession(
       nextSessionRequestId('terminate'),
@@ -349,7 +325,6 @@ function App(): React.JSX.Element | null {
     );
     return result.kind === 'success';
   }, [sessionClient]);
-
   const resumeRecentSession = React.useCallback((session: ActiveTerminalSession) => {
     openTarget({
       title: sessionTitle(session),
@@ -360,10 +335,8 @@ function App(): React.JSX.Element | null {
       ...(session.command !== undefined ? {command: session.command} : {}),
     });
   }, [openTarget]);
-
   const terminalSessionIdRef = React.useRef(terminalTarget.sessionId);
   terminalSessionIdRef.current = terminalTarget.sessionId;
-
   // A tapped session notification opens that session once Horus is unlocked.
   React.useEffect(() => {
     if (!authenticated) return undefined;
@@ -386,14 +359,11 @@ function App(): React.JSX.Element | null {
       subscription.remove();
     };
   }, [authenticated, loadRecentSessions, resumeRecentSession]);
-
   const openGithubAccount = React.useCallback(() => {
     setGithubAccountError(undefined);
     setRoute('github-account');
   }, []);
-
   const openSettings = React.useCallback(() => setRoute('settings'), []);
-
   const logoutGithubAccount = React.useCallback(() => {
     if (githubAccount === undefined) {
       setRoute('home');
@@ -411,11 +381,9 @@ function App(): React.JSX.Element | null {
       completionMarker: marker,
     });
   }, [githubAccount, openTerminal, setPendingCompletion]);
-
   const openGithubLoginBrowser = React.useCallback(async (url: string) => {
     await openGithubDeviceLoginUrl(url);
   }, []);
-
   const addProject = React.useCallback((name: string) => {
     const directory = workspaceProjectDirectory(name);
     if (directory === undefined || selectedHarness === undefined) return;
@@ -424,7 +392,6 @@ function App(): React.JSX.Element | null {
     setProjects(current => [...current.filter(item => item.path !== directory), project]);
     openTerminal(harnessSessionTarget(selectedHarness, name, directory));
   }, [openTerminal, selectedHarness]);
-
   const beginProjectClone = React.useCallback((source: string, name: string, kind: 'github' | 'url') => {
     const directory = workspaceProjectDirectory(name);
     if (directory === undefined || selectedHarness === undefined) return;
@@ -441,11 +408,9 @@ function App(): React.JSX.Element | null {
       completionMarker: marker,
     }, 'projects');
   }, [openTerminal, selectedHarness, setPendingCompletion]);
-
   const cloneProject = React.useCallback((url: string, name: string) => {
     beginProjectClone(url, name, 'url');
   }, [beginProjectClone]);
-
   const refreshGithubRepositories = React.useCallback(async () => {
     if (projectLoadingRef.current) {
       queuedGithubRefreshRef.current = true;
@@ -488,7 +453,6 @@ function App(): React.JSX.Element | null {
     }
   }, []);
   refreshGithubRepositoriesRef.current = refreshGithubRepositories;
-
   const refreshManualWorkspaces = React.useCallback(async () => {
     const refreshId = ++manualWorkspaceRefreshRef.current;
     const result = await listGuestDirectory('workspace', ['projects']);
@@ -507,7 +471,6 @@ function App(): React.JSX.Element | null {
       ...current.filter(project => project.remote !== undefined),
     ]);
   }, []);
-
   React.useEffect(() => {
     if (autoRefresh === undefined || route !== autoRefresh.route) return;
     setAutoRefresh(undefined);
@@ -519,7 +482,6 @@ function App(): React.JSX.Element | null {
     }
     void refreshGithubRepositories().catch(() => undefined);
   }, [autoRefresh, refreshGithubRepositories, refreshManualWorkspaces, route]);
-
   const openGithubLogin = React.useCallback((returnTo: 'home' | 'projects') => {
     const marker = `HORUS_GITHUB_LOGIN_COMPLETE_${nextSessionRequestId('github-login')}`;
     setPendingCompletion({kind: 'github-login', marker, returnTo});
@@ -528,7 +490,6 @@ function App(): React.JSX.Element | null {
   }, [openTarget, setPendingCompletion]);
   const openProjectLogin = React.useCallback(() => openGithubLogin('projects'), [openGithubLogin]);
   const openHomeGithubLogin = React.useCallback(() => openGithubLogin('home'), [openGithubLogin]);
-
   const openExistingProject = React.useCallback((project: ProjectSummary) => {
     if (project.remote !== undefined) {
       beginProjectClone(project.path, project.name, 'github');
@@ -538,7 +499,6 @@ function App(): React.JSX.Element | null {
     if (directory === undefined || selectedHarness === undefined) return;
     openTerminal(harnessSessionTarget(selectedHarness, project.name, directory));
   }, [beginProjectClone, openTerminal, selectedHarness]);
-
   const failPendingCompletion = React.useCallback((marker: string) => {
     const pending = pendingCompletionRef.current;
     if (pending === undefined || pending.marker !== marker) return;
@@ -553,7 +513,6 @@ function App(): React.JSX.Element | null {
     // Part of the clone may have landed; show what is on disk now.
     void refreshManualWorkspaces().catch(() => undefined);
   }, [refreshManualWorkspaces, setPendingCompletion]);
-
   const onTerminalCompletion = React.useCallback(() => {
     const marker = terminalTarget.completionMarker;
     const pending = pendingCompletionRef.current;
@@ -595,7 +554,6 @@ function App(): React.JSX.Element | null {
     setPendingCompletion(undefined);
     openTerminal(harnessSessionTarget(pending.harness, pending.name, pending.directory));
   }, [openTerminal, refreshGithubRepositories, setPendingCompletion, terminalTarget.completionMarker]);
-
   const importDownloadedRootfs = React.useCallback(() => {
     void (async () => {
       const previousError = bootError;
@@ -611,11 +569,9 @@ function App(): React.JSX.Element | null {
       setBootError(imported.errorCode === 'import_cancelled' ? previousError : imported.errorCode);
     })();
   }, [bootError]);
-
   const onTerminalCommandFailure = React.useCallback(() => {
     if (terminalTarget.completionMarker !== undefined) failPendingCompletion(terminalTarget.completionMarker);
   }, [failPendingCompletion, terminalTarget.completionMarker]);
-
   if (route === 'boot') {
     return <LoadingScreen onDebugTerminal={__DEV__ ? openDebugTerminal : undefined} onImport={importDownloadedRootfs} onRetry={() => setRetryCount(value => value + 1)} status={bootState} detail={bootError} />;
   }
@@ -753,5 +709,4 @@ function App(): React.JSX.Element | null {
     />
   );
 }
-
 export default App;
